@@ -77,36 +77,62 @@ def render_grafico_tasa_imprevistos_nuevo(
             df_all = df_all[df_all['año'] == año]
             df_imprevistos = df_imprevistos[df_imprevistos['año'] == año]
         
-        # Monthly vehicle count
-        df_vehiculos = df_all.groupby(['año', 'mes']).agg(
-            total_vehiculos=('PLACA', 'count')
-        ).reset_index()
-        
-        # Monthly imprevistos count with the same business rules used in CAMBIO charts
+        # Monthly imprevistos count (deduplicated by placa+siniestro)
         df_imp_mes = resumir_imprevistos_mensuales(df=df, año=año)
         
-        # Merge
-        df_resumen = df_vehiculos.merge(df_imp_mes, on=['año', 'mes'], how='left')
+        # ----------------------------------------------------------------
+        # TOTAL VEHÍCULOS: desde hoja "TASA DE IMPREVISTOS" del sheets
+        # ----------------------------------------------------------------
+        df_tasa_sheets = st.session_state.get("tasa_imprevistos_data")
+        if df_tasa_sheets is not None and not df_tasa_sheets.empty:
+            df_tasa_filtered = df_tasa_sheets.copy()
+            if año:
+                df_tasa_filtered = df_tasa_filtered[df_tasa_filtered['AÑO'] == año]
+            
+            # Sumar totales por año+mes (across all talleres)
+            df_vehiculos = df_tasa_filtered.groupby(['AÑO', 'MES']).agg(
+                total_vehiculos=('TOTAL', 'sum')
+            ).reset_index()
+            df_vehiculos = df_vehiculos.rename(columns={'AÑO': 'año', 'MES': 'mes'})
+            
+            # Asegurar tipos numéricos consistentes
+            df_vehiculos['año'] = df_vehiculos['año'].astype(int)
+            df_vehiculos['mes'] = df_vehiculos['mes'].astype(int)
+        else:
+            st.warning("⚠️ No se encontraron datos de la hoja 'TASA DE IMPREVISTOS'. Usando conteo del DataFrame como fallback.")
+            df_vehiculos = df_all.groupby(['año', 'mes']).agg(
+                total_vehiculos=('PLACA', 'count')
+            ).reset_index()
+            df_vehiculos['año'] = df_vehiculos['año'].astype(int)
+            df_vehiculos['mes'] = df_vehiculos['mes'].astype(int)
+        
+        # Merge vehículos + imprevistos (outer para no perder meses)
+        df_resumen = df_vehiculos.merge(df_imp_mes, on=['año', 'mes'], how='outer')
+        df_resumen['total_vehiculos'] = df_resumen['total_vehiculos'].fillna(0).astype(int)
         df_resumen['total_imprevistos'] = df_resumen['total_imprevistos'].fillna(0).astype(int)
         df_resumen['culpa_taller'] = df_resumen['culpa_taller'].fillna(0).astype(int)
         df_resumen['no_culpa_taller'] = df_resumen['total_imprevistos'] - df_resumen['culpa_taller']
         
-        # Calculate rates
-        df_resumen['tasa'] = (
-            (df_resumen['total_imprevistos'] / df_resumen['total_vehiculos'] * 100)
+        # Calcular tasas (evitar división por cero)
+        df_resumen['tasa'] = df_resumen.apply(
+            lambda r: (r['total_imprevistos'] / r['total_vehiculos'] * 100) if r['total_vehiculos'] > 0 else 0,
+            axis=1
         ).round(1)
         
-        df_resumen['tasa_culpa_taller'] = (
-            (df_resumen['culpa_taller'] / df_resumen['total_vehiculos'] * 100)
+        df_resumen['tasa_culpa_taller'] = df_resumen.apply(
+            lambda r: (r['culpa_taller'] / r['total_vehiculos'] * 100) if r['total_vehiculos'] > 0 else 0,
+            axis=1
         ).round(1)
         
-        df_resumen['tasa_no_culpa_taller'] = (
-            (df_resumen['no_culpa_taller'] / df_resumen['total_vehiculos'] * 100)
+        df_resumen['tasa_no_culpa_taller'] = df_resumen.apply(
+            lambda r: (r['no_culpa_taller'] / r['total_vehiculos'] * 100) if r['total_vehiculos'] > 0 else 0,
+            axis=1
         ).round(1)
         
-        # Create month labels
-        df_resumen["mes_nombre"] = df_resumen["mes"].apply(
-            lambda x: datetime(2000, int(x), 1).strftime('%b %Y')
+        # Create month labels usando el año real
+        df_resumen["mes_nombre"] = df_resumen.apply(
+            lambda row: datetime(int(row["año"]), int(row["mes"]), 1).strftime('%b %Y'),
+            axis=1
         )
         
         # Sort by month
@@ -118,6 +144,32 @@ def render_grafico_tasa_imprevistos_nuevo(
     if df_resumen.empty:
         st.info("No hay datos para el período seleccionado.")
         return
+    
+    # =========================================================================
+    # DEBUG PANEL
+    # =========================================================================
+    with st.expander("🐛 Debug - Datos de Tasa de Imprevistos", expanded=False):
+        st.markdown("**1. Datos de la hoja 'TASA DE IMPREVISTOS' (session_state):**")
+        df_tasa_debug = st.session_state.get("tasa_imprevistos_data")
+        if df_tasa_debug is not None and not df_tasa_debug.empty:
+            st.dataframe(df_tasa_debug, hide_index=True)
+        else:
+            st.caption("No hay datos en session_state['tasa_imprevistos_data']")
+        
+        st.markdown("**2. Imprevistos extraídos del DataFrame (por mes):**")
+        if df_imp_mes is not None and not df_imp_mes.empty:
+            st.dataframe(df_imp_mes, hide_index=True)
+        else:
+            st.caption("No se extrajeron imprevistos")
+        
+        st.markdown("**3. Total de vehículos (de la hoja TASA DE IMPREVISTOS):**")
+        if df_vehiculos is not None and not df_vehiculos.empty:
+            st.dataframe(df_vehiculos, hide_index=True)
+        else:
+            st.caption("No hay datos de vehículos")
+        
+        st.markdown("**4. DataFrame resumen final (merge + tasas):**")
+        st.dataframe(df_resumen[['año', 'mes', 'mes_nombre', 'total_vehiculos', 'total_imprevistos', 'culpa_taller', 'tasa']], hide_index=True)
     
     # Create the combined chart
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -160,20 +212,6 @@ def render_grafico_tasa_imprevistos_nuevo(
         ),
         secondary_y=True
     )
-    
-    # Optional: Add line for workshop fault rate
-    if (df_resumen["tasa_culpa_taller"] > 0).any():
-        fig.add_trace(
-            go.Scatter(
-                x=df_resumen["mes_nombre"],
-                y=df_resumen["tasa_culpa_taller"],
-                mode='lines+markers',
-                name='Tasa Culpa del Taller (%)',
-                line=dict(color='#10B981', width=2, dash='dash'),
-                marker=dict(size=6, color='#10B981')
-            ),
-            secondary_y=True
-        )
     
     # Update layout
     fig.update_layout(

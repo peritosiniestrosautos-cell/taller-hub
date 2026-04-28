@@ -28,8 +28,6 @@ from modules.visualizations import (
     render_kpis,
     render_grafico_ahorro_mes,
     render_grafico_causales,
-    render_grafico_tasa_imprevistos,
-    render_grafico_cambio_repuestos,
     render_tabla_detalle,
     render_recuperacion_mensual,
     render_efectividad_valoracion,
@@ -263,17 +261,6 @@ def main():
     
     with col2:
         render_grafico_causales(df_filtered)
-    
-    # Segunda fila de gráficos
-    col3, col4 = st.columns(2)
-    
-    with col3:
-        render_grafico_tasa_imprevistos(df_filtered)
-    
-    with col4:
-        render_grafico_cambio_repuestos(df_filtered)
-    
-    st.divider()
     
     # =========================================================================
     # SECCIÓN: DISTRIBUCIÓN DE AHORROS POR COMPAÑÍA DE SEGUROS
