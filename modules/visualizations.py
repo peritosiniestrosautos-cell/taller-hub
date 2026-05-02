@@ -8,15 +8,18 @@ RF-003: Componentes de visualización
 
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from datetime import datetime
 
 from .config import PORCENTAJE_HONORARIOS
 from .data_processor import add_log, filter_authorized_savings_records
 from .fee_config import calculate_fee, load_fee_config, calculate_fees_for_df
-from .chart_config import get_chart_type_for_id, CHART_TYPE_BAR, CHART_TYPE_LINE
+from .chart_config import get_chart_type_for_id, CHART_TYPE_BAR
 from .imprevistos_processor import resumir_imprevistos_mensuales
+from .theme import (
+    BrandColors, SemanticColors, GrayScale, ChartHeights, CHART_COLORS,
+    get_plotly_theme, get_chart_color, hex_to_plotly_fill
+)
 
 
 # ============================================================================
@@ -61,7 +64,7 @@ def render_kpis(df):
     # Determine if multitaller
     es_multitaller = 'TALLER_ORIGEN' in df.columns and df['TALLER_ORIGEN'].nunique() > 1
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2 = st.columns(2, gap="medium")
 
     with col1:
         st.markdown(f"""
@@ -82,9 +85,7 @@ def render_kpis(df):
             </div>
             """, unsafe_allow_html=True)
         else:
-            # Show fee breakdown
             if es_multitaller and fee_info['by_taller']:
-                # Show total and mention per-taller calculation
                 rule_label = "Mixto (ver detalle)"
                 st.markdown(f"""
                 <div class="kpi-container kpi-honorarios">
@@ -93,8 +94,7 @@ def render_kpis(df):
                     <div class="kpi-delta">{len(fee_info['by_taller'])} talleres con tarifas individuales</div>
                 </div>
                 """, unsafe_allow_html=True)
-                
-                # Show per-taller breakdown in expander
+
                 with st.expander("🔍 Ver detalle por taller"):
                     for taller_id, taller_fee in fee_info['by_taller'].items():
                         regla = "Premium" if taller_fee['rule_applied'] == 'premium' else "Base"
@@ -103,7 +103,6 @@ def render_kpis(df):
                             f"({taller_fee['fee_percentage']*100:.0f}% - {regla})"
                         )
             else:
-                # Single workshop
                 regla = "Premium" if fee_info['total']['rule_applied'] == 'premium' else "Base"
                 st.markdown(f"""
                 <div class="kpi-container kpi-honorarios">
@@ -112,6 +111,8 @@ def render_kpis(df):
                     <div class="kpi-delta">Regla: {regla}</div>
                 </div>
                 """, unsafe_allow_html=True)
+
+    col3, col4 = st.columns(2, gap="medium")
 
     with col3:
         st.markdown(f"""
@@ -201,49 +202,42 @@ def render_grafico_ahorro_mes(df):
     fig = go.Figure()
 
     if chart_type == CHART_TYPE_BAR:
-        # Bar chart
         fig.add_trace(go.Bar(
             x=df_mes['TEXTO_FECHA'],
             y=df_mes['DIFERENCIA'],
             name='Ahorro Mensual',
-            marker_color='#0066CC',
+            marker_color=BrandColors.PRIMARY,
             marker_line_width=0
         ))
     else:
-        # Line chart (default)
         fig.add_trace(go.Scatter(
             x=df_mes['TEXTO_FECHA'],
             y=df_mes['DIFERENCIA'],
             mode='lines+markers',
             name='Ahorro Mensual',
-            line=dict(color='#0066CC', width=3),
-            marker=dict(size=8, color='#00A8E8', line=dict(width=2, color='white')),
+            line=dict(color=BrandColors.PRIMARY, width=3),
+            marker=dict(size=8, color=BrandColors.SECONDARY, line=dict(width=2, color='white')),
             fill='tozeroy',
-            fillcolor='rgba(0, 102, 204, 0.1)'
+            fillcolor=hex_to_plotly_fill(BrandColors.PRIMARY, 0.1)
         ))
 
-        # Línea de tendencia (only for line chart)
         if len(df_mes) > 2:
             fig.add_trace(go.Scatter(
                 x=df_mes['TEXTO_FECHA'],
                 y=df_mes['DIFERENCIA'].rolling(window=3, min_periods=1).mean(),
                 mode='lines',
                 name='Tendencia (media móvil)',
-                line=dict(color='#00CC66', width=2, dash='dash')
+                line=dict(color=BrandColors.ACCENT, width=2, dash='dash')
             ))
 
     fig.update_layout(
-        title='📈 Evolución de Ahorros por Mes',
-        xaxis_title='Mes',
-        yaxis_title='Ahorro ($)',
-        height=400,
-        hovermode='x unified',
-        showlegend=True,
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+        **get_plotly_theme(
+            title='📈 Evolución de Ahorros por Mes',
+            height=ChartHeights.LARGE,
+        )
     )
-
-    # Formato de eje Y como moneda
-    fig.update_yaxes(tickformat='$,.0f')
+    fig.update_xaxes(title_text='Mes')
+    fig.update_yaxes(title_text='Ahorro ($)', tickformat='$,.0f')
 
     st.plotly_chart(fig, width='stretch')
 
@@ -254,7 +248,7 @@ def render_grafico_ahorro_mes(df):
 
 def render_grafico_causales(df):
     """
-    RF-003.5: Gráfico de causales de cambio (barras horizontales o líneas verticales)
+    RF-003.5: Gráfico de causales de cambio (barras horizontales)
     """
     if 'CAUSAL' not in df.columns:
         st.warning("No se encontró columna de CAUSAL")
@@ -266,56 +260,75 @@ def render_grafico_causales(df):
     df_causal.columns = ['CAUSAL', 'AHORRO_TOTAL', 'CANTIDAD']
     df_causal = df_causal.sort_values('AHORRO_TOTAL', ascending=True).tail(10)
 
-    # Get chart type from config
-    chart_type = get_chart_type_for_id('causales')
+    if df_causal.empty:
+        st.info("No hay causales de cambio para mostrar.")
+        return
 
-    if chart_type == CHART_TYPE_LINE:
-        # Vertical line chart alternative
-        fig = go.Figure()
-        
-        fig.add_trace(go.Scatter(
-            x=df_causal['CAUSAL'],
-            y=df_causal['AHORRO_TOTAL'],
-            mode='lines+markers',
-            name='Ahorro Total',
-            line=dict(color='#0066CC', width=3),
-            marker=dict(size=10, color='#00A8E8', line=dict(width=2, color='white'))
-        ))
-        
-        fig.update_layout(
-            title='📊 Top Causales de Cambio por Valor de Ahorro',
-            xaxis_title='Causal',
-            yaxis_title='Ahorro Total ($)',
-            height=400,
-            hovermode='x unified',
-            showlegend=False,
-            xaxis_tickangle=-45
-        )
-        
-        fig.update_yaxes(tickformat='$,.0f')
-    else:
-        # Horizontal bar chart (default)
-        fig = px.bar(
-            df_causal,
-            y='CAUSAL',
-            x='AHORRO_TOTAL',
-            orientation='h',
-            color='CANTIDAD',
-            color_continuous_scale='Blues',
-            title='📊 Top Causales de Cambio por Valor de Ahorro',
-            labels={'AHORRO_TOTAL': 'Ahorro Total ($)', 'CAUSAL': 'Causal', 'CANTIDAD': 'Frecuencia'},
-            height=400
-        )
+    # Wrap long causal names for readability
+    def wrap_text(text, max_chars=25):
+        text = str(text)
+        if len(text) <= max_chars:
+            return text
+        words = text.split()
+        lines = []
+        current_line = ""
+        for word in words:
+            if len(current_line) + len(word) + 1 > max_chars and current_line:
+                lines.append(current_line)
+                current_line = word
+            else:
+                current_line = f"{current_line} {word}".strip()
+        if current_line:
+            lines.append(current_line)
+        return "<br>".join(lines)
 
-        fig.update_traces(
-            texttemplate='${x:,.0f}',
-            textposition='outside'
-        )
+    df_causal['CAUSAL_DISPLAY'] = df_causal['CAUSAL'].apply(wrap_text)
 
-        fig.update_layout(
-            yaxis=dict(autorange="reversed"),
-            coloraxis_colorbar=dict(title="Cantidad")
+    # Dynamic height based on number of items
+    n_items = len(df_causal)
+    chart_height = max(ChartHeights.SMALL, n_items * 45 + 80)
+
+    # Color gradient based on quantity
+    colors = []
+    max_cantidad = df_causal['CANTIDAD'].max()
+    for _, row in df_causal.iterrows():
+        intensity = row['CANTIDAD'] / max_cantidad if max_cantidad > 0 else 0.3
+        r = int(0 + intensity * 0)
+        g = int(102 + intensity * (168 - 102))
+        b = int(204 + intensity * (232 - 204))
+        colors.append(f'rgb({r}, {g}, {b})')
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        y=df_causal['CAUSAL_DISPLAY'],
+        x=df_causal['AHORRO_TOTAL'],
+        orientation='h',
+        marker_color=colors,
+        text=df_causal['AHORRO_TOTAL'].apply(lambda x: f'${x:,.0f}'),
+        textposition='outside',
+        textfont=dict(size=11, color=GrayScale.SLATE_800),
+        hovertemplate='<b>%{y}</b><br>Ahorro: $%{x:,.0f}<br>Cantidad: %{customdata}<extra></extra>',
+        customdata=df_causal['CANTIDAD']
+    ))
+
+    fig.update_layout(
+        title='📊 Top Causales de Cambio por Valor de Ahorro',
+        xaxis_title='Ahorro Total ($)',
+        yaxis_title=None,
+        height=chart_height,
+        hovermode='y unified',
+        showlegend=False,
+        margin=dict(l=150, r=20, t=60, b=40),
+        xaxis=dict(
+            tickformat='$,.0f',
+            gridcolor=GrayScale.SLATE_200,
+        ),
+        yaxis=dict(
+            autorange='reversed',
+            tickfont=dict(size=11),
         )
+    )
 
     st.plotly_chart(fig, width='stretch')
 
@@ -464,7 +477,7 @@ def render_recuperacion_mensual(df):
             x=resumen['PERIODO'],
             y=resumen['RECUPERACION'],
             name='Recuperación',
-            marker_color='#0066CC',
+            marker_color=BrandColors.PRIMARY,
             marker_line_width=0
         ))
     else:
@@ -473,22 +486,21 @@ def render_recuperacion_mensual(df):
             y=resumen['RECUPERACION'],
             mode='lines+markers',
             name='Recuperación',
-            line=dict(color='#0066CC', width=3),
-            marker=dict(size=8, color='#00A8E8', line=dict(width=2, color='white')),
+            line=dict(color=BrandColors.PRIMARY, width=3),
+            marker=dict(size=8, color=BrandColors.SECONDARY, line=dict(width=2, color='white')),
             fill='tozeroy',
-            fillcolor='rgba(0, 102, 204, 0.1)'
+            fillcolor=hex_to_plotly_fill(BrandColors.PRIMARY, 0.1)
         ))
 
     fig.update_layout(
-        title='📊 Evolución de Recuperación Mensual',
-        xaxis_title='Mes',
-        yaxis_title='Recuperación ($)',
-        height=400,
-        hovermode='x unified',
-        showlegend=False
+        **get_plotly_theme(
+            title='📊 Evolución de Recuperación Mensual',
+            height=ChartHeights.LARGE,
+            show_legend=False
+        )
     )
-
-    fig.update_yaxes(tickformat='$,.0f')
+    fig.update_xaxes(title_text='Mes')
+    fig.update_yaxes(title_text='Recuperación ($)', tickformat='$,.0f')
 
     st.plotly_chart(fig, width='stretch')
 
@@ -522,123 +534,113 @@ def render_recuperacion_mensual(df):
 
 def render_efectividad_valoracion(df):
     """
-    Muestra la eficiencia mensual de valoración:
-    (1 - vehículos con imprevistos / total vehículos cotizados) * 100
+    Muestra la eficiencia mensual de valoración usando el mismo cálculo
+    que la Tasa de Imprevistos mensual, pero invertido:
+    Eficiencia = (1 - tasa_imprevistos) = (1 - total_imprevistos / total_vehiculos) * 100
     """
     st.subheader("📐 Efectividad en la Valoración")
 
-    required_cols = {'AÑO', 'MES', 'PLACA'}
     if df is None or df.empty:
         st.warning("No hay datos disponibles para calcular la efectividad de valoración.")
         return
 
+    required_cols = {'AÑO', 'MES', 'PLACA'}
     if not required_cols.issubset(df.columns):
         st.warning("Faltan columnas requeridas (AÑO, MES, PLACA) para calcular la efectividad.")
         return
 
-    df_valid = df.copy()
-    df_valid['AÑO'] = pd.to_numeric(df_valid['AÑO'], errors='coerce')
-    df_valid['MES'] = pd.to_numeric(df_valid['MES'], errors='coerce')
-    df_valid['PLACA_NORMALIZADA'] = df_valid['PLACA'].astype(str).str.upper().str.strip()
+    # ------------------------------------------------------------------
+    # 1. Obtener imprevistos mensuales (misma lógica que tasa de imprevistos)
+    # ------------------------------------------------------------------
+    df_imp_mes = resumir_imprevistos_mensuales(df=df)
 
-    df_valid = df_valid[
-        df_valid['AÑO'].notna() &
-        df_valid['MES'].notna() &
-        (df_valid['AÑO'] > 2000) &
-        (df_valid['MES'] >= 1) &
-        (df_valid['MES'] <= 12) &
-        df_valid['PLACA_NORMALIZADA'].ne('') &
-        df_valid['PLACA_NORMALIZADA'].ne('NAN')
-    ].copy()
-
-    if df_valid.empty:
-        st.warning("No hay datos válidos de fecha y placa para calcular la efectividad.")
+    if df_imp_mes.empty:
+        st.info("No se encontraron registros de imprevistos en los datos actuales.")
         return
 
-    df_valid['AÑO'] = df_valid['AÑO'].astype(int)
-    df_valid['MES'] = df_valid['MES'].astype(int)
+    # ------------------------------------------------------------------
+    # 2. Total vehículos desde la hoja "TASA DE IMPREVISTOS"
+    # ------------------------------------------------------------------
+    df_all = df.copy()
+    df_all['año'] = pd.to_numeric(df_all['AÑO'], errors='coerce')
+    df_all['mes'] = pd.to_numeric(df_all['MES'], errors='coerce')
 
-    # Solo registros con estatus AUTORIZADO
-    df_valid = filter_authorized_savings_records(df_valid)
-    if df_valid.empty:
-        st.warning("No hay registros AUTORIZADOS para calcular la efectividad de valoración.")
-        return
-
-    # Clave única: PLACA + SINIESTRO (si siniestro cambia, cuenta como otro vehículo cotizado)
-    df_valid['SINIESTRO_NORM'] = df_valid.get('SINIESTRO', pd.Series('', index=df_valid.index)).astype(str).str.upper().str.strip()
-    df_valid['PLACA_SINIESTRO'] = df_valid['PLACA_NORMALIZADA'] + '|' + df_valid['SINIESTRO_NORM']
-
-    total_vehiculos = (
-        df_valid.groupby(['AÑO', 'MES'])['PLACA_SINIESTRO']
-        .nunique()
-        .reset_index(name='Cantidad vehículos cotizados')
-    )
-
-    # Vehículos con imprevistos = los que tienen ACCION que contenga "CAMBIO"
-    if 'ACCION' in df_valid.columns:
-        df_imprevistos = df_valid[
-            df_valid['ACCION'].astype(str).str.contains('CAMBIO', na=False, case=False)
-        ].copy()
+    df_tasa_sheets = st.session_state.get("tasa_imprevistos_data")
+    if df_tasa_sheets is not None and not df_tasa_sheets.empty:
+        df_vehiculos = df_tasa_sheets.groupby(['AÑO', 'MES']).agg(
+            total_vehiculos=('TOTAL', 'sum')
+        ).reset_index()
+        df_vehiculos = df_vehiculos.rename(columns={'AÑO': 'año', 'MES': 'mes'})
+        df_vehiculos['año'] = df_vehiculos['año'].astype(int)
+        df_vehiculos['mes'] = df_vehiculos['mes'].astype(int)
     else:
-        df_imprevistos = pd.DataFrame()
+        st.warning("⚠️ No se encontraron datos de la hoja 'TASA DE IMPREVISTOS'. Usando conteo del DataFrame como fallback.")
+        df_vehiculos = df_all.groupby(['año', 'mes']).agg(
+            total_vehiculos=('PLACA', 'count')
+        ).reset_index()
+        df_vehiculos['año'] = df_vehiculos['año'].astype(int)
+        df_vehiculos['mes'] = df_vehiculos['mes'].astype(int)
 
-    if not df_imprevistos.empty:
-        imprevistos_por_mes = (
-            df_imprevistos.groupby(['AÑO', 'MES'])['PLACA_SINIESTRO']
-            .nunique()
-            .reset_index(name='Vehículos con imprevistos')
-        )
-    else:
-        imprevistos_por_mes = pd.DataFrame(columns=['AÑO', 'MES', 'Vehículos con imprevistos'])
+    # ------------------------------------------------------------------
+    # 3. Merge y cálculo de eficiencia (1 - tasa)
+    # ------------------------------------------------------------------
+    df_resumen = df_vehiculos.merge(df_imp_mes, on=['año', 'mes'], how='outer')
+    df_resumen['total_vehiculos'] = df_resumen['total_vehiculos'].fillna(0).astype(int)
+    df_resumen['total_imprevistos'] = df_resumen['total_imprevistos'].fillna(0).astype(int)
+    df_resumen['culpa_taller'] = df_resumen['culpa_taller'].fillna(0).astype(int)
 
-    resumen = total_vehiculos.merge(imprevistos_por_mes, on=['AÑO', 'MES'], how='left')
-    resumen['Vehículos con imprevistos'] = resumen['Vehículos con imprevistos'].fillna(0).astype(int)
-    resumen['Eficiencia (%)'] = (
-        1 - (resumen['Vehículos con imprevistos'] / resumen['Cantidad vehículos cotizados'])
-    ) * 100
-    resumen['Eficiencia (%)'] = resumen['Eficiencia (%)'].clip(lower=0, upper=100).round(1)
+    # Tasa de imprevistos
+    df_resumen['tasa'] = df_resumen.apply(
+        lambda r: (r['total_imprevistos'] / r['total_vehiculos'] * 100) if r['total_vehiculos'] > 0 else 0,
+        axis=1
+    ).round(1)
 
-    resumen['FECHA'] = pd.to_datetime(
-        resumen['AÑO'].astype(str) + '-' + resumen['MES'].astype(str) + '-01',
-        format='%Y-%m-%d',
-        errors='coerce'
+    # Eficiencia = 1 - tasa (expresada en porcentaje)
+    df_resumen['Eficiencia (%)'] = (100 - df_resumen['tasa']).clip(lower=0, upper=100).round(1)
+
+    # Crear etiquetas de mes
+    df_resumen["mes_nombre"] = df_resumen.apply(
+        lambda row: datetime(int(row["año"]), int(row["mes"]), 1).strftime('%b %Y'),
+        axis=1
     )
-    resumen = resumen[resumen['FECHA'].notna()].sort_values('FECHA').reset_index(drop=True)
+    df_resumen = df_resumen.sort_values(['año', 'mes']).reset_index(drop=True)
 
-    if resumen.empty:
+    if df_resumen.empty:
         st.warning("No se pudo construir la serie mensual de efectividad.")
         return
 
-    resumen['Mes'] = resumen['FECHA'].dt.strftime('%b %Y')
-
-    eficiencia_promedio = resumen['Eficiencia (%)'].mean()
-    mejor_mes = resumen.loc[resumen['Eficiencia (%)'].idxmax()]
-    peor_mes = resumen.loc[resumen['Eficiencia (%)'].idxmin()]
+    # ------------------------------------------------------------------
+    # 4. KPIs resumen
+    # ------------------------------------------------------------------
+    eficiencia_promedio = df_resumen['Eficiencia (%)'].mean()
+    mejor_idx = df_resumen['Eficiencia (%)'].idxmax()
+    peor_idx = df_resumen['Eficiencia (%)'].idxmin()
+    mejor_mes = df_resumen.loc[mejor_idx]
+    peor_mes = df_resumen.loc[peor_idx]
 
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Eficiencia promedio", f"{eficiencia_promedio:.1f}%")
     with col2:
-        st.metric("Mejor mes", mejor_mes['Mes'], f"{mejor_mes['Eficiencia (%)']:.1f}%")
+        st.metric("Mejor mes", mejor_mes['mes_nombre'], f"{mejor_mes['Eficiencia (%)']:.1f}%")
     with col3:
-        st.metric("Peor mes", peor_mes['Mes'], f"{peor_mes['Eficiencia (%)']:.1f}%", delta_color="inverse")
+        st.metric("Peor mes", peor_mes['mes_nombre'], f"{peor_mes['Eficiencia (%)']:.1f}%", delta_color="inverse")
 
-    tabla_resumen = resumen[[
-        'Mes',
-        'Cantidad vehículos cotizados',
-        'Vehículos con imprevistos',
+    # ------------------------------------------------------------------
+    # 5. Tabla resumen
+    # ------------------------------------------------------------------
+    tabla_resumen = df_resumen[[
+        'mes_nombre',
+        'total_vehiculos',
+        'total_imprevistos',
         'Eficiencia (%)'
     ]].copy()
+    tabla_resumen = tabla_resumen.rename(columns={
+        'mes_nombre': 'Mes',
+        'total_vehiculos': 'Cantidad vehículos cotizados',
+        'total_imprevistos': 'Vehículos con imprevistos'
+    })
     tabla_resumen['Eficiencia (%)'] = tabla_resumen['Eficiencia (%)'].map(lambda x: f"{x:.1f}%")
-
-    # Debug temporal para validar cálculo
-    with st.expander("🔍 Debug del cálculo de efectividad"):
-        st.write("**Total vehículos cotizados (por PLACA+SINIESTRO):**")
-        st.write(total_vehiculos)
-        st.write("**Vehículos con imprevistos (por PLACA+SINIESTRO):**")
-        st.write(imprevistos_por_mes if not imprevistos_por_mes.empty else "Sin imprevistos detectados")
-        st.write("**Resumen crudo antes de formatear:**")
-        st.write(resumen[['Mes', 'Cantidad vehículos cotizados', 'Vehículos con imprevistos', 'Eficiencia (%)']])
 
     st.dataframe(
         tabla_resumen,
@@ -647,25 +649,36 @@ def render_efectividad_valoracion(df):
         height=350
     )
 
+    # ------------------------------------------------------------------
+    # 6. Gráfico de línea
+    # ------------------------------------------------------------------
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=resumen['Mes'],
-        y=resumen['Eficiencia (%)'],
+        x=df_resumen['mes_nombre'],
+        y=df_resumen['Eficiencia (%)'],
         mode='lines+markers',
         name='Eficiencia',
-        line=dict(color='#0066CC', width=3),
-        marker=dict(size=8, color='#00A8E8', line=dict(width=2, color='white'))
+        line=dict(color=BrandColors.PRIMARY, width=3),
+        marker=dict(size=8, color=BrandColors.SECONDARY, line=dict(width=2, color='white'))
     ))
 
-    fig.update_layout(
-        title='📈 Eficiencia Mensual en la Valoración',
-        xaxis_title='Mes',
-        yaxis_title='Eficiencia (%)',
-        height=400,
-        hovermode='x unified',
-        showlegend=False
+    fig.add_shape(
+        type="line",
+        x0=df_resumen['mes_nombre'].iloc[0],
+        x1=df_resumen['mes_nombre'].iloc[-1],
+        y0=100, y1=100,
+        line=dict(color=BrandColors.ACCENT, width=2, dash="dash"),
     )
-    fig.update_yaxes(range=[0, 100], ticksuffix='%')
+
+    fig.update_layout(
+        **get_plotly_theme(
+            title='📈 Eficiencia Mensual en la Valoración',
+            height=ChartHeights.LARGE,
+            show_legend=False
+        )
+    )
+    fig.update_xaxes(title_text='Mes')
+    fig.update_yaxes(title_text='Eficiencia (%)', range=[0, 100], ticksuffix='%')
 
     st.plotly_chart(fig, width='stretch')
 
@@ -715,17 +728,8 @@ def render_grafico_ahorro_por_compania(df):
     # Calcular porcentaje
     resumen['PORCENTAJE'] = (resumen['DIFERENCIA'] / total_ahorro) * 100
 
-    # Colores corporativos + variaciones
-    colors = [
-        '#0066CC', '#00A8E8', '#00CC66', '#F59E0B',
-        '#DC2626', '#8B5CF6', '#EC4899', '#14B8A6',
-        '#F97316', '#6366F1', '#84CC16', '#06B6D4'
-    ]
-
     # Replicar colores si hay más compañías que colores
-    color_list = []
-    for i in range(len(resumen)):
-        color_list.append(colors[i % len(colors)])
+    color_list = [CHART_COLORS[i % len(CHART_COLORS)] for i in range(len(resumen))]
 
     # Subtítulo
     st.subheader("🏢 Distribución de Ahorros por Compañía de Seguros")
@@ -755,7 +759,7 @@ def render_grafico_ahorro_por_compania(df):
     fig.update_layout(
         title_text="Distribución de Ahorros por CIA",
         title_x=0.5,
-        height=450,
+        height=ChartHeights.XLARGE,
         showlegend=True,
         legend=dict(orientation='h', yanchor='bottom', y=-0.15, xanchor='center', x=0.5)
     )

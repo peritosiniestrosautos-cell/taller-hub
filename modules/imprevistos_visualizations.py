@@ -29,6 +29,10 @@ from .imprevistos_processor import (
     calcular_estadisticas_por_causal,
     resumir_imprevistos_mensuales,
 )
+from .theme import (
+    BrandColors, SemanticColors, GrayScale, ChartHeights,
+    get_plotly_theme, get_chart_color, hex_with_opacity
+)
 
 
 # ============================================================================
@@ -145,32 +149,6 @@ def render_grafico_tasa_imprevistos_nuevo(
         st.info("No hay datos para el período seleccionado.")
         return
     
-    # =========================================================================
-    # DEBUG PANEL
-    # =========================================================================
-    with st.expander("🐛 Debug - Datos de Tasa de Imprevistos", expanded=False):
-        st.markdown("**1. Datos de la hoja 'TASA DE IMPREVISTOS' (session_state):**")
-        df_tasa_debug = st.session_state.get("tasa_imprevistos_data")
-        if df_tasa_debug is not None and not df_tasa_debug.empty:
-            st.dataframe(df_tasa_debug, hide_index=True)
-        else:
-            st.caption("No hay datos en session_state['tasa_imprevistos_data']")
-        
-        st.markdown("**2. Imprevistos extraídos del DataFrame (por mes):**")
-        if df_imp_mes is not None and not df_imp_mes.empty:
-            st.dataframe(df_imp_mes, hide_index=True)
-        else:
-            st.caption("No se extrajeron imprevistos")
-        
-        st.markdown("**3. Total de vehículos (de la hoja TASA DE IMPREVISTOS):**")
-        if df_vehiculos is not None and not df_vehiculos.empty:
-            st.dataframe(df_vehiculos, hide_index=True)
-        else:
-            st.caption("No hay datos de vehículos")
-        
-        st.markdown("**4. DataFrame resumen final (merge + tasas):**")
-        st.dataframe(df_resumen[['año', 'mes', 'mes_nombre', 'total_vehiculos', 'total_imprevistos', 'culpa_taller', 'tasa']], hide_index=True)
-    
     # Create the combined chart
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     
@@ -180,26 +158,26 @@ def render_grafico_tasa_imprevistos_nuevo(
             x=df_resumen["mes_nombre"],
             y=df_resumen["total_vehiculos"],
             name="Cantidad Vehículos",
-            marker_color="#0066CC",
+            marker_color=BrandColors.PRIMARY,
             opacity=0.6,
             offsetgroup=0
         ),
         secondary_y=False
     )
-    
+
     # Add bars for imprevistos
     fig.add_trace(
         go.Bar(
             x=df_resumen["mes_nombre"],
             y=df_resumen["total_imprevistos"],
             name="Cantidad Imprevistos",
-            marker_color="#F59E0B",
+            marker_color=SemanticColors.WARNING,
             opacity=0.7,
             offsetgroup=1
         ),
         secondary_y=False
     )
-    
+
     # Add line for rate (%)
     fig.add_trace(
         go.Scatter(
@@ -207,16 +185,16 @@ def render_grafico_tasa_imprevistos_nuevo(
             y=df_resumen["tasa"],
             mode='lines+markers',
             name='Tasa de Imprevistos (%)',
-            line=dict(color='#DC2626', width=3),
-            marker=dict(size=8, color='#DC2626', line=dict(width=2, color='white'))
+            line=dict(color=SemanticColors.ERROR, width=3),
+            marker=dict(size=8, color=SemanticColors.ERROR, line=dict(width=2, color='white'))
         ),
         secondary_y=True
     )
-    
+
     # Update layout
     fig.update_layout(
         title='📊 Tasa de Imprevistos - Vehículos vs Imprevistos vs Tasa',
-        height=450,
+        height=ChartHeights.XLARGE,
         hovermode='x unified',
         legend=dict(
             orientation='h',
@@ -251,7 +229,7 @@ def render_grafico_tasa_imprevistos_nuevo(
             text=f"{row['tasa']:.1f}%",
             showarrow=False,
             yshift=10,
-            font=dict(size=10, color="#DC2626")
+            font=dict(size=10, color=SemanticColors.ERROR)
         )
     
     st.plotly_chart(fig, width="stretch", use_container_width=True)
@@ -428,7 +406,7 @@ def render_grafico_clasificacion_faltas(
     # Create pie chart
     labels = ['Culpa del Taller', 'No es Culpa del Taller']
     values = [stats["culpa_taller_total"], stats["no_culpa_taller_total"]]
-    colors = ['#DC2626', '#10B981']
+    colors = [SemanticColors.ERROR, SemanticColors.SUCCESS]
     
     fig = go.Figure(data=[go.Pie(
         labels=labels,
@@ -509,17 +487,20 @@ def render_estadisticas_por_tipo(
     fig.add_trace(go.Bar(
         x=df_stats["tipo_label"],
         y=df_stats["cantidad"],
-        marker_color=['#0066CC', '#F59E0B'][:len(df_stats)],
+        marker_color=[BrandColors.PRIMARY, SemanticColors.WARNING][:len(df_stats)],
         text=df_stats["cantidad"],
         textposition='outside'
     ))
-    
+
     fig.update_layout(
-        title='Cantidad de Imprevistos por Tipo',
-        xaxis_title='Tipo',
-        yaxis_title='Cantidad',
-        height=350
+        **get_plotly_theme(
+            title='Cantidad de Imprevistos por Tipo',
+            height=ChartHeights.SMALL,
+            show_legend=False
+        )
     )
+    fig.update_xaxes(title_text='Tipo')
+    fig.update_yaxes(title_text='Cantidad')
     
     st.plotly_chart(fig, width="stretch", use_container_width=True)
     
@@ -571,16 +552,16 @@ def render_estadisticas_por_causal(
         y=df_stats["causal"],
         x=df_stats["cantidad"],
         orientation='h',
-        marker_color='#F59E0B',
+        marker_color=SemanticColors.WARNING,
         text=df_stats["cantidad"],
         textposition='outside'
     ))
-    
+
     fig.update_layout(
         title='Cantidad de Imprevistos por Causal',
         xaxis_title='Cantidad',
         yaxis_title='Causal',
-        height=max(350, len(df_stats) * 40),
+        height=max(ChartHeights.SMALL, len(df_stats) * 40),
         yaxis={'categoryorder': 'total ascending'}
     )
     
@@ -715,10 +696,10 @@ def _calcular_tasa_culpa_taller_cambio(df: pd.DataFrame) -> pd.DataFrame:
 def render_grafico_culpa_taller_mensual(df=None):
     """
     Gráfico de línea: tasa mensual de imprevistos con cambio de repuesto (culpa del taller).
-    Estilo similar a la imagen de referencia del cliente.
+    Estilo consistente con el resto del dashboard.
     """
     import datetime
-    st.subheader("IMPREVISTOS CON CAMBIO DE REPUESTO")
+    st.subheader("🔧 Imprevistos con Cambio de Repuesto")
 
     if df is None or df.empty:
         st.info("No hay datos disponibles.")
@@ -751,47 +732,37 @@ def render_grafico_culpa_taller_mensual(df=None):
         x=resumen['mes_label'],
         y=resumen['culpa_taller'],
         mode='lines+markers+text',
-        line=dict(color='#B8D835', width=3),
-        marker=dict(size=10, color='#4472C4', line=dict(width=2, color='white')),
+        line=dict(color=BrandColors.PRIMARY, width=3),
+        marker=dict(size=10, color=BrandColors.SECONDARY, line=dict(width=2, color='white')),
         text=resumen['culpa_taller'].astype(int).astype(str),
         textposition='top center',
-        textfont=dict(size=12, color='white'),
+        textfont=dict(size=12, color=BrandColors.PRIMARY),
         hovertemplate='%{x}: %{y} imprevistos<extra></extra>',
         name='Culpa del Taller'
     ))
 
     fig.update_layout(
-        paper_bgcolor='#3D8B8B',
-        plot_bgcolor='#3D8B8B',
-        font=dict(color='white', family='Arial Black'),
-        title=dict(
-            text='IMPREVISTOS CON CAMBIO DE REPUESTO',
-            font=dict(size=18, color='white'),
-            x=0.02
-        ),
-        xaxis=dict(
-            showgrid=False,
-            showline=False,
-            tickfont=dict(size=13, color='white'),
-        ),
-        yaxis=dict(
-            showgrid=False,
-            showline=False,
-            visible=False,
-        ),
-        height=380,
-        margin=dict(l=30, r=30, t=70, b=40),
-        showlegend=False,
+        **get_plotly_theme(
+            title='🔧 Imprevistos con Cambio de Repuesto - Culpa del Taller',
+            height=ChartHeights.MEDIUM,
+            show_legend=False
+        )
     )
+    fig.update_xaxes(title_text='Mes')
+    fig.update_yaxes(title_text='Cantidad')
+    fig.update_layout(margin=dict(l=50, r=30, t=60, b=50))
 
     st.plotly_chart(fig, use_container_width=True)
 
     # Métricas resumidas
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Total imprevistos cambio", int(resumen['total'].sum()))
+        st.metric("Total registros cambio", int(resumen['total'].sum()))
     with col2:
         st.metric("Culpa del taller", int(resumen['culpa_taller'].sum()))
+    with col3:
+        tasa = (resumen['culpa_taller'].sum() / resumen['total'].sum() * 100) if resumen['total'].sum() > 0 else 0
+        st.metric("Tasa culpa del taller", f"{tasa:.1f}%")
 
 
 # ============================================================================

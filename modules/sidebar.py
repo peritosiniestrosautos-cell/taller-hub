@@ -28,6 +28,7 @@ from .taller_manager import (
 
 from .fee_config import render_presentation_toggle
 from .chart_config import render_chart_type_selector
+from .theme import BrandColors, GrayScale
 
 
 # ============================================================================
@@ -40,11 +41,11 @@ def render_sidebar():
     Versión multitaller con CRUD de talleres integrado.
     """
     
-    st.sidebar.markdown("""
+    st.sidebar.markdown(f"""
     <div style="text-align: center; margin-bottom: 2rem;">
-        <h2 style="color: #0066CC; margin-bottom: 0.5rem;">🚗 TALLER HUB</h2>
-        <p style="color: #64748B; font-size: 0.9rem;">Sistema de Gestión de Ahorros</p>
-        <p style="color: #00CC66; font-size: 0.75rem;">🏪 Modo Multitaller</p>
+        <h2 style="color: {BrandColors.PRIMARY}; margin-bottom: 0.5rem;">🚗 TALLER HUB</h2>
+        <p style="color: {GrayScale.SLATE_500}; font-size: 0.9rem;">Sistema de Gestión de Ahorros</p>
+        <p style="color: {BrandColors.ACCENT}; font-size: 0.75rem;">🏪 Modo Multitaller</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -149,7 +150,7 @@ def _render_selector_talleres_moderno() -> List[str]:
         
         # Mostrar lista compacta
         for tid, config in talleres.items():
-            color = config.get("color", "#0066CC")
+            color = config.get("color", BrandColors.PRIMARY)
             st.sidebar.markdown(
                 f"<div style='display:flex;align-items:center;margin:2px 0;'>"
                 f"<div style='width:10px;height:10px;background:{color};border-radius:50%;margin-right:8px;'></div>"
@@ -164,7 +165,7 @@ def _render_selector_talleres_moderno() -> List[str]:
             col1, col2 = st.sidebar.columns([0.12, 0.88])
             
             with col1:
-                color = config.get("color", "#0066CC")
+                color = config.get("color", BrandColors.PRIMARY)
                 st.markdown(
                     f"<div style='width:12px;height:12px;background:{color};"
                     f"border-radius:50%;margin-top:8px;'></div>",
@@ -209,7 +210,7 @@ def render_filtros(df):
             for idx, taller in enumerate(talleres_en_datos):
                 with cols_talleres[idx]:
                     # Buscar color del taller
-                    color = "#0066CC"
+                    color = BrandColors.PRIMARY
                     all_talleres = cargar_talleres()
                     for tid, tconf in all_talleres.items():
                         if tconf["nombre"] == taller and "color" in tconf:
@@ -383,7 +384,7 @@ def render_resumen_talleres_sidebar(df):
         st.sidebar.markdown(f"""
         <div style="margin-bottom: 0.5rem;">
             <div style="font-size: 0.85rem; font-weight: 600;">{taller}</div>
-            <div style="font-size: 0.75rem; color: #64748B;">
+            <div style="font-size: 0.75rem; color: {GrayScale.SLATE_500};">
                 💰 ${ahorro:,.0f} | 🚗 {cantidad} reparaciones
             </div>
         </div>

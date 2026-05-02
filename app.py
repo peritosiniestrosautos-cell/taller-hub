@@ -63,7 +63,6 @@ from modules.components import (
     render_footer,
     render_alerts,
     render_data_info,
-    render_savings_debug_panel,
     render_export_section,
     render_error_state,
     render_empty_state
@@ -208,8 +207,6 @@ def main():
     # Información de filtros aplicados
     if len(df_filtered) != len(df):
         st.info(f"📊 Filtros aplicados: mostrando {len(df_filtered)} de {len(df)} registros")
-
-    render_savings_debug_panel(df_filtered)
     
     # =========================================================================
     # SECCIÓN: KPIs COMPARATIVOS MULTITALLER
@@ -270,35 +267,31 @@ def main():
     st.divider()
     
     # =========================================================================
-    # SECCIÓN: RECUPERACIÓN MENSUAL
+    # SECCIÓN: RECUPERACIÓN MENSUAL + EFECTIVIDAD
     # =========================================================================
-    render_recuperacion_mensual(df_filtered)
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        render_recuperacion_mensual(df_filtered)
 
-    st.divider()
-
-    # =========================================================================
-    # SECCIÓN: EFECTIVIDAD EN LA VALORACIÓN
-    # =========================================================================
-    render_efectividad_valoracion(df_filtered)
+    with col2:
+        render_efectividad_valoracion(df_filtered)
 
     st.divider()
 
     # =========================================================================
     # SECCIÓN: TASA DE IMPREVISTOS
     # =========================================================================
-    with st.expander("📊 Ver Gráfico de Tasa de Imprevistos", expanded=True):
+    col1, col2 = st.columns(2)
+    
+    with col1:
         render_grafico_tasa_imprevistos_nuevo(
             df=df_filtered,
             taller_id=None,
             año=None
         )
 
-    st.divider()
-
-    # =========================================================================
-    # SECCIÓN: TASA DE IMPREVISTOS - CULPA DEL TALLER (CAMBIO DE REPUESTO)
-    # =========================================================================
-    with st.expander("🔧 Culpa del Taller: Imprevistos con Cambio de Repuesto", expanded=True):
+    with col2:
         render_grafico_culpa_taller_mensual(df=df_filtered)
 
     st.divider()

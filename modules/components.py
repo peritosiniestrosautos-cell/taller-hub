@@ -9,6 +9,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from .data_processor import filter_authorized_savings_records
+from .theme import GrayScale
 
 
 def render_header():
@@ -29,8 +30,8 @@ def render_header():
 def render_footer():
     """Renderiza el footer del dashboard"""
     st.divider()
-    st.markdown("""
-    <div style="text-align: center; color: #94A3B8; font-size: 0.8rem; padding: 2rem 0;">
+    st.markdown(f"""
+    <div style="text-align: center; color: {GrayScale.SLATE_400}; font-size: 0.8rem; padding: 2rem 0;">
         <p>Taller Hub v2.0 | Desarrollado para RENOMOTRIZ</p>
         <p>Stakeholders: Alexander Cano (Analista) | Sergio Romero (Operativo)</p>
     </div>

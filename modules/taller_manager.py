@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 from datetime import datetime
 
 from .fee_config import update_taller_fee_config, load_fee_config
+from .theme import TALLER_COLORS, TALLER_COLOR_NAMES, BrandColors, GrayScale
 
 # ============================================================================
 # CONFIGURACIÓN DE PERSISTENCIA
@@ -21,21 +22,10 @@ from .fee_config import update_taller_fee_config, load_fee_config
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 TALLERES_FILE = os.path.join(DATA_DIR, "talleres.json")
 
-# Paleta de colores predefinida para talleres
-COLORES_PREDEFINIDOS = [
-    "#0066CC",  # Azul corporativo
-    "#00A8E8",  # Cyan
-    "#00CC66",  # Verde
-    "#F59E0B",  # Amarillo/Naranja
-    "#DC2626",  # Rojo
-    "#8B5CF6",  # Púrpura
-    "#EC4899",  # Rosa
-    "#14B8A6",  # Teal
-    "#F97316",  # Naranja fuerte
-    "#84CC16",  # Lima
-]
+# Re-export from theme for backwards compatibility
+COLORES_PREDEFINIDOS = TALLER_COLORS
+NOMBRES_COLORES = {f"#{'🔵🩵🟢🟡🔴🟣🩷🩲🟠🫒'[i]} {name}" for i, (hex_code, name) in enumerate(TALLER_COLOR_NAMES.items())}
 
-# Nombres de colores en español para el selector
 NOMBRES_COLORES = {
     "#0066CC": "🔵 Azul",
     "#00A8E8": "🩵 Cyan",
@@ -64,7 +54,7 @@ def _get_default_talleres() -> Dict[str, dict]:
             "nombre": "Taller Principal",
             "sheet_url": "https://docs.google.com/spreadsheets/d/13sR-FFPIasaY0xlkpmcZnyLJfCVKGUNNoK4RFO6R6pY/edit",
             "activo": True,
-            "color": "#0066CC",
+            "color": BrandColors.PRIMARY,
         }
     }
 
@@ -267,11 +257,11 @@ def get_color_taller(taller_id: str) -> str:
     config = get_taller_config(taller_id)
     if config and "color" in config:
         return config["color"]
-    
+
     # Asignar color basado en índice si no tiene definido
     talleres = list(cargar_talleres().keys())
     idx = talleres.index(taller_id) if taller_id in talleres else 0
-    return COLORES_PREDEFINIDOS[idx % len(COLORES_PREDEFINIDOS)]
+    return TALLER_COLORS[idx % len(TALLER_COLORS)]
 
 
 # ============================================================================
@@ -300,7 +290,7 @@ def render_crud_talleres_sidebar():
             
             with col1:
                 # Indicador de color
-                color = config.get("color", "#0066CC")
+                color = config.get("color", BrandColors.PRIMARY)
                 estado_icon = "🟢" if config.get("activo", True) else "⚪"
                 st.markdown(
                     f"<div style='width:14px;height:14px;background:{color};"
@@ -330,14 +320,14 @@ def render_crud_talleres_sidebar():
     # ================================================================
     with st.sidebar.expander("➕ Agregar Nuevo Taller", expanded=False):
         # CSS específico para inputs (sin !important para no romper focus)
-        st.markdown("""
+        st.markdown(f"""
         <style>
-        section[data-testid="stSidebar"] .stTextInput input {
-            color: #1f2937;
-        }
-        section[data-testid="stSidebar"] .stTextInput input::placeholder {
-            color: #9ca3af;
-        }
+        section[data-testid="stSidebar"] .stTextInput input {{
+            color: {GrayScale.SLATE_700};
+        }}
+        section[data-testid="stSidebar"] .stTextInput input::placeholder {{
+            color: {GrayScale.SLATE_400};
+        }}
         </style>
         """, unsafe_allow_html=True)
 
@@ -413,8 +403,8 @@ def render_crud_talleres_sidebar():
                 
                 # Preview
                 st.markdown(f"""
-                <div style="background: #1E293B; padding: 0.5rem; border-radius: 6px; margin-top: 1.5rem;">
-                <p style="color: #94A3B8; margin: 0; font-size: 0.75rem;">
+                <div style="background: {GrayScale.SLATE_800}; padding: 0.5rem; border-radius: 6px; margin-top: 1.5rem;">
+                <p style="color: {GrayScale.SLATE_400}; margin: 0; font-size: 0.75rem;">
                 💡 > ${fee_threshold:,.0f} → {fee_premium:.0f}%<br>
                 📌 ≤ ${fee_threshold:,.0f} → {fee_base:.0f}%
                 </p>
@@ -451,11 +441,11 @@ def render_crud_talleres_sidebar():
     if talleres:
         with st.sidebar.expander("✏️ Editar Taller", expanded=False):
             # CSS específico para inputs
-            st.markdown("""
+            st.markdown(f"""
             <style>
-            section[data-testid="stSidebar"] .stTextInput input {
-                color: #1f2937;
-            }
+            section[data-testid="stSidebar"] .stTextInput input {{
+                color: {GrayScale.SLATE_700};
+            }}
             </style>
             """, unsafe_allow_html=True)
 
@@ -551,8 +541,8 @@ def render_crud_talleres_sidebar():
                         
                         # Preview
                         st.markdown(f"""
-                        <div style="background: #1E293B; padding: 0.5rem; border-radius: 6px; margin-top: 1.5rem;">
-                        <p style="color: #94A3B8; margin: 0; font-size: 0.75rem;">
+                        <div style="background: {GrayScale.SLATE_800}; padding: 0.5rem; border-radius: 6px; margin-top: 1.5rem;">
+                        <p style="color: {GrayScale.SLATE_400}; margin: 0; font-size: 0.75rem;">
                         💡 > ${edit_fee_threshold:,.0f} → {edit_fee_premium:.0f}%<br>
                         📌 ≤ ${edit_fee_threshold:,.0f} → {edit_fee_base:.0f}%
                         </p>
@@ -601,7 +591,7 @@ def render_selector_talleres_simple() -> List[str]:
         col1, col2 = st.sidebar.columns([0.15, 0.85])
         
         with col1:
-            color = config.get("color", "#0066CC")
+            color = config.get("color", BrandColors.PRIMARY)
             st.markdown(
                 f"<div style='width:12px;height:12px;background:{color};"
                 f"border-radius:50%;margin-top:8px;'></div>",

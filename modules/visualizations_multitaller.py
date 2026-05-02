@@ -13,9 +13,22 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from .config import PORCENTAJE_HONORARIOS
-from .taller_config import get_color_taller, TALLERES_CONFIG
+from .taller_config import get_taller_config, get_talleres_disponibles
 from .fee_config import calculate_fee, load_fee_config, calculate_fees_for_df
 from .data_processor import filter_authorized_savings_records
+from .theme import (
+    BrandColors, SemanticColors, GrayScale, ChartHeights, TALLER_COLORS,
+    get_plotly_theme, get_chart_color, hex_with_opacity
+)
+
+
+def _get_taller_color(taller_name: str) -> str:
+    """Busca el color de un taller por nombre"""
+    talleres = get_talleres_disponibles()
+    for tid, tconf in talleres.items():
+        if tconf.get("nombre") == taller_name and "color" in tconf:
+            return tconf["color"]
+    return BrandColors.PRIMARY
 
 
 # ============================================================================
@@ -72,42 +85,40 @@ def render_kpis_multitaller(df):
     # Ordenar por ahorro total descendente
     resumen = resumen.sort_values("AHORRO_TOTAL", ascending=False)
     
-    # Mostrar KPIs en cards
-    cols = st.columns(len(resumen))
-    
-    for idx, (_, row) in enumerate(resumen.iterrows()):
-        with cols[idx]:
-            taller = row["TALLER"]
-            
-            # Buscar color del taller
-            color = "#0066CC"
-            for tid, tconf in TALLERES_CONFIG.items():
-                if tconf["nombre"] == taller and "color" in tconf:
-                    color = tconf["color"]
-                    break
-            
-            st.markdown(f"""
-            <div style="background: linear-gradient(135deg, {color}22 0%, {color}11 100%); 
-                        border-left: 4px solid {color}; 
-                        border-radius: 12px; padding: 1rem;">
-                <div style="font-size: 1rem; font-weight: 700; color: {color}; margin-bottom: 0.5rem;">
-                    {taller}
-                </div>
-                <div style="font-size: 1.5rem; font-weight: 800; color: #1E293B;">
-                    ${row["AHORRO_TOTAL"]:,.0f}
-                </div>
-                <div style="font-size: 0.8rem; color: #64748B; margin-top: 0.25rem;">
-                    💰 Ahorro Total
-                </div>
-                <div style="margin-top: 0.75rem; border-top: 1px solid #E2E8F0; padding-top: 0.5rem;">
-                    <div style="font-size: 0.8rem; color: #475569;">
-                        📊 {row["TOTAL_REPARACIONES"]} reparaciones<br>
-                        🚗 {row["VEHICULOS_UNICOS"]} vehículos<br>
-                        💵 ${row["UTILIDAD"]:,.0f} utilidad
+    # Mostrar KPIs en cards (2 por fila)
+    for i in range(0, len(resumen), 2):
+        cols = st.columns(2, gap="medium")
+        for j in range(2):
+            idx = i + j
+            if idx < len(resumen):
+                with cols[j]:
+                    taller = resumen.iloc[idx]["TALLER"]
+                    row = resumen.iloc[idx]
+                    color = _get_taller_color(taller)
+
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, {hex_with_opacity(color, 34)} 0%, {hex_with_opacity(color, 17)} 100%); 
+                                border-left: 4px solid {color}; 
+                                border-radius: 12px; padding: 1rem; min-height: 140px;
+                                display: flex; flex-direction: column; justify-content: center;">
+                        <div style="font-size: 1rem; font-weight: 700; color: {color}; margin-bottom: 0.5rem;">
+                            {taller}
+                        </div>
+                        <div style="font-size: 1.5rem; font-weight: 800; color: {GrayScale.SLATE_800};">
+                            ${row["AHORRO_TOTAL"]:,.0f}
+                        </div>
+                        <div style="font-size: 0.8rem; color: {GrayScale.SLATE_500}; margin-top: 0.25rem;">
+                            💰 Ahorro Total
+                        </div>
+                        <div style="margin-top: 0.75rem; border-top: 1px solid {GrayScale.SLATE_200}; padding-top: 0.5rem;">
+                            <div style="font-size: 0.8rem; color: {GrayScale.SLATE_600};">
+                                📊 {int(row["TOTAL_REPARACIONES"])} reparaciones<br>
+                                🚗 {int(row["VEHICULOS_UNICOS"])} vehículos<br>
+                                💵 ${row["UTILIDAD"]:,.0f} utilidad
+                            </div>
+                        </div>
                     </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
 
 
 def render_ranking_talleres(df):
@@ -212,11 +223,9 @@ def render_comparativo_anual(df):
     # Crear gráfico
     fig = go.Figure()
 
-    # Colores para cada año (usar paleta de Plotly)
-    colors = px.colors.qualitative.Plotly
-
+    # Colores para cada año (usar paleta centralizada)
     for i, año in enumerate(años_unicos):
-        color = colors[i % len(colors)]
+        color = get_chart_color(i)
         df_año = df_grupo[df_grupo["AÑO"] == año]
 
         # Preparar datos para el gráfico
@@ -242,15 +251,14 @@ def render_comparativo_anual(df):
         ))
 
     fig.update_layout(
-        title="📅 Comparativo Anual: Ahorro Mensual por Año",
-        xaxis_title="Mes",
-        yaxis_title="Ahorro ($)",
-        height=450,
-        barmode="group",
-        hovermode="x unified",
-        legend=dict(title="Año", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        yaxis_tickformat="$,.0f"
+        **get_plotly_theme(
+            title="📅 Comparativo Anual: Ahorro Mensual por Año",
+            height=ChartHeights.XLARGE,
+        )
     )
+    fig.update_xaxes(title_text="Mes")
+    fig.update_yaxes(title_text="Ahorro ($)", tickformat="$,.0f")
+    fig.update_layout(barmode="group")
 
     st.plotly_chart(fig, width='stretch')
 
@@ -286,10 +294,13 @@ def render_grafico_comparativo_ahorro(df):
     
     fig.update_traces(textposition="outside")
     fig.update_layout(
-        showlegend=False,
-        height=400,
-        yaxis_tickformat="$,.0f"
+        **get_plotly_theme(
+            title="💰 Comparativa de Ahorro por Taller",
+            height=ChartHeights.LARGE,
+            show_legend=False
+        )
     )
+    fig.update_yaxes(tickformat="$,.0f")
     
     st.plotly_chart(fig, width='stretch')
 
@@ -335,13 +346,8 @@ def render_grafico_tendencia_por_taller(df):
     for taller in talleres:
         df_taller = df_mes[df_mes["TALLER_ORIGEN"] == taller]
         if not df_taller.empty:
-            # Buscar color
-            color = "#0066CC"
-            for tid, tconf in TALLERES_CONFIG.items():
-                if tconf["nombre"] == taller and "color" in tconf:
-                    color = tconf["color"]
-                    break
-            
+            color = _get_taller_color(taller)
+
             fig.add_trace(go.Scatter(
                 x=df_taller["TEXTO_FECHA"],
                 y=df_taller["DIFERENCIA"],
@@ -350,16 +356,15 @@ def render_grafico_tendencia_por_taller(df):
                 line=dict(color=color, width=2),
                 marker=dict(size=6)
             ))
-    
+
     fig.update_layout(
-        title="📈 Evolución de Ahorros por Taller",
-        xaxis_title="Mes",
-        yaxis_title="Ahorro ($)",
-        height=450,
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        yaxis_tickformat="$,.0f"
+        **get_plotly_theme(
+            title="📈 Evolución de Ahorros por Taller",
+            height=ChartHeights.XLARGE,
+        )
     )
+    fig.update_xaxes(title_text="Mes")
+    fig.update_yaxes(title_text="Ahorro ($)", tickformat="$,.0f")
     
     st.plotly_chart(fig, width='stretch')
 
@@ -404,7 +409,13 @@ def render_heatmap_talleres_meses(df):
         aspect="auto"
     )
     
-    fig.update_layout(height=400)
+    fig.update_layout(
+        **get_plotly_theme(
+            title="🔥 Mapa de Calor: Ahorro por Taller y Mes",
+            height=ChartHeights.LARGE,
+            show_legend=True
+        )
+    )
     
     st.plotly_chart(fig, width='stretch')
 
@@ -424,15 +435,8 @@ def render_distribucion_por_taller(df):
     resumen = df.groupby("TALLER_ORIGEN")["DIFERENCIA"].sum().reset_index()
     resumen = resumen.sort_values("DIFERENCIA", ascending=False)
     
-    # Colores personalizados
-    colors = []
-    for taller in resumen["TALLER_ORIGEN"]:
-        color = "#0066CC"
-        for tid, tconf in TALLERES_CONFIG.items():
-            if tconf["nombre"] == taller and "color" in tconf:
-                color = tconf["color"]
-                break
-        colors.append(color)
+    # Colores personalizados por taller
+    colors = [_get_taller_color(taller) for taller in resumen["TALLER_ORIGEN"]]
     
     # Crear gráfico de dona
     fig = go.Figure(data=[go.Pie(
@@ -454,9 +458,10 @@ def render_distribucion_por_taller(df):
     )
     
     fig.update_layout(
-        title="📊 Distribución del Ahorro entre Talleres",
-        height=450,
-        showlegend=True
+        **get_plotly_theme(
+            title="📊 Distribución del Ahorro entre Talleres",
+            height=ChartHeights.XLARGE,
+        )
     )
     
     st.plotly_chart(fig, width='stretch')
