@@ -194,6 +194,20 @@ def render_filtros(df):
     
     st.sidebar.header("🔍 Filtros de Datos")
     
+    # =========================================================================
+    # BOTÓN LIMPIAR FILTROS (Debe ir ANTES de los widgets)
+    # =========================================================================
+    if st.sidebar.button("🧹 Limpiar Filtros", type="secondary", key="clear_filters_btn"):
+        st.session_state["filtro_año"] = "Todos"
+        st.session_state["filtro_trimestre"] = "Todos"
+        st.session_state["filtro_mes"] = "Todos"
+        st.session_state["filtro_compañia"] = []
+        st.session_state["filtro_estado"] = []
+        st.session_state["filtro_accion"] = []
+        if "filtro_talleres" in st.session_state:
+            del st.session_state["filtro_talleres"]
+        st.rerun()
+    
     filtros = {}
     
     # =========================================================================
@@ -227,7 +241,8 @@ def render_filtros(df):
                 "Selecciona talleres:",
                 options=talleres_en_datos,
                 default=talleres_en_datos,
-                help="Filtra los datos por taller(es) específico(s)"
+                help="Filtra los datos por taller(es) específico(s)",
+                key="filtro_talleres"
             )
         else:
             filtros["talleres"] = talleres_en_datos
@@ -240,20 +255,21 @@ def render_filtros(df):
     if df is not None and 'AÑO' in df.columns:
         años = sorted(df['AÑO'].dropna().unique(), reverse=True)
         años_options = ["Todos"] + [str(int(a)) for a in años if a > 0]
-        filtros['año'] = st.sidebar.selectbox("📅 Año", años_options)
+        filtros['año'] = st.sidebar.selectbox("📅 Año", años_options, key="filtro_año")
 
     # Filtro de Trimestre (Q1/Q2/Q3/Q4/Todos)
     filtros['trimestre'] = st.sidebar.selectbox(
         "📊 Trimestre",
         options=["Todos", "Q1", "Q2", "Q3", "Q4"],
-        help="Q1: Ene-Mar | Q2: Abr-Jun | Q3: Jul-Sep | Q4: Oct-Dic"
+        help="Q1: Ene-Mar | Q2: Abr-Jun | Q3: Jul-Sep | Q4: Oct-Dic",
+        key="filtro_trimestre"
     )
 
     # Filtro de Mes
     if df is not None and 'MES' in df.columns:
         meses = sorted(df['MES'].dropna().unique())
         meses_names = ["Todos"] + [datetime(2000, int(m), 1).strftime('%B') for m in meses if m > 0]
-        mes_sel = st.sidebar.selectbox("📆 Mes", meses_names)
+        mes_sel = st.sidebar.selectbox("📆 Mes", meses_names, key="filtro_mes")
         filtros['mes'] = mes_sel if mes_sel == "Todos" else meses_names.index(mes_sel)
     
     # Filtro de Compañía
@@ -263,7 +279,8 @@ def render_filtros(df):
         filtros['compañia'] = st.sidebar.multiselect(
             "🏢 Compañía de Seguros",
             options=cias,
-            default=[]
+            default=[],
+            key="filtro_compañia"
         )
     
     # Filtro de Estado
@@ -273,7 +290,8 @@ def render_filtros(df):
         filtros['estado'] = st.sidebar.multiselect(
             "📋 Estado Autorización",
             options=estados,
-            default=[]
+            default=[],
+            key="filtro_estado"
         )
     
     # Filtro de Acción
@@ -283,12 +301,9 @@ def render_filtros(df):
         filtros['accion'] = st.sidebar.multiselect(
             "🔧 Tipo de Acción",
             options=acciones,
-            default=[]
+            default=[],
+            key="filtro_accion"
         )
-    
-    # Botón de limpiar filtros
-    if st.sidebar.button("🧹 Limpiar Filtros", type="secondary"):
-        st.rerun()
     
     return filtros
 
