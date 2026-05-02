@@ -202,12 +202,25 @@ def render_grafico_ahorro_mes(df):
     fig = go.Figure()
 
     if chart_type == CHART_TYPE_BAR:
+        # Preparar textos abreviados para cada barra
+        textos = []
+        for v in df_mes['DIFERENCIA']:
+            if pd.isna(v):
+                textos.append('')
+            elif abs(v) >= 1000000:
+                textos.append(f'{v/1000000:.1f}M')
+            else:
+                textos.append(f'{v/1000:.1f}k')
+
         fig.add_trace(go.Bar(
             x=df_mes['TEXTO_FECHA'],
             y=df_mes['DIFERENCIA'],
             name='Ahorro Mensual',
             marker_color=BrandColors.PRIMARY,
-            marker_line_width=0
+            marker_line_width=0,
+            text=textos,
+            textposition='outside',
+            textfont=dict(size=13, color='white', family='Inter')
         ))
     else:
         fig.add_trace(go.Scatter(
@@ -230,12 +243,12 @@ def render_grafico_ahorro_mes(df):
                 line=dict(color=BrandColors.ACCENT, width=2, dash='dash')
             ))
 
-    fig.update_layout(
-        **get_plotly_theme(
-            title='📈 Evolución de Ahorros por Mes',
-            height=ChartHeights.LARGE,
-        )
+    theme = get_plotly_theme(
+        title='📈 Evolución de Ahorros por Mes',
+        height=ChartHeights.LARGE,
     )
+    theme["margin"] = {"l": 60, "r": 20, "t": 80, "b": 60}
+    fig.update_layout(**theme)
     fig.update_xaxes(title_text='Mes')
     fig.update_yaxes(title_text='Ahorro ($)', tickformat='$,.0f')
 
@@ -307,7 +320,7 @@ def render_grafico_causales(df):
         marker_color=colors,
         text=df_causal['AHORRO_TOTAL'].apply(lambda x: f'${x:,.0f}'),
         textposition='outside',
-        textfont=dict(size=11, color=GrayScale.SLATE_800),
+        textfont=dict(size=11, color='#FFFFFF'),
         hovertemplate='<b>%{y}</b><br>Ahorro: $%{x:,.0f}<br>Cantidad: %{customdata}<extra></extra>',
         customdata=df_causal['CANTIDAD']
     ))
@@ -473,12 +486,25 @@ def render_recuperacion_mensual(df):
     fig = go.Figure()
 
     if chart_type == CHART_TYPE_BAR:
+        # Preparar textos abreviados para cada barra
+        textos = []
+        for v in resumen['RECUPERACION']:
+            if pd.isna(v):
+                textos.append('')
+            elif abs(v) >= 1000000:
+                textos.append(f'{v/1000000:.1f}M')
+            else:
+                textos.append(f'{v/1000:.1f}k')
+
         fig.add_trace(go.Bar(
             x=resumen['PERIODO'],
             y=resumen['RECUPERACION'],
             name='Recuperación',
             marker_color=BrandColors.PRIMARY,
-            marker_line_width=0
+            marker_line_width=0,
+            text=textos,
+            textposition='outside',
+            textfont=dict(size=13, color='white')
         ))
     else:
         fig.add_trace(go.Scatter(
@@ -492,13 +518,13 @@ def render_recuperacion_mensual(df):
             fillcolor=hex_to_plotly_fill(BrandColors.PRIMARY, 0.1)
         ))
 
-    fig.update_layout(
-        **get_plotly_theme(
-            title='📊 Evolución de Recuperación Mensual',
-            height=ChartHeights.LARGE,
-            show_legend=False
-        )
+    theme = get_plotly_theme(
+        title=' Evolución de Recuperación Mensual',
+        height=ChartHeights.LARGE,
+        show_legend=False
     )
+    theme["margin"] = {"l": 60, "r": 20, "t": 80, "b": 60}
+    fig.update_layout(**theme)
     fig.update_xaxes(title_text='Mes')
     fig.update_yaxes(title_text='Recuperación ($)', tickformat='$,.0f')
 
@@ -656,10 +682,13 @@ def render_efectividad_valoracion(df):
     fig.add_trace(go.Scatter(
         x=df_resumen['mes_nombre'],
         y=df_resumen['Eficiencia (%)'],
-        mode='lines+markers',
+        mode='lines+markers+text',
         name='Eficiencia',
         line=dict(color=BrandColors.PRIMARY, width=3),
-        marker=dict(size=8, color=BrandColors.SECONDARY, line=dict(width=2, color='white'))
+        marker=dict(size=8, color=BrandColors.SECONDARY, line=dict(width=2, color='white')),
+        text=df_resumen['Eficiencia (%)'].apply(lambda x: f'{x:.1f}%'),
+        textposition='top center',
+        textfont=dict(size=11, color='white')
     ))
 
     fig.add_shape(
@@ -670,13 +699,13 @@ def render_efectividad_valoracion(df):
         line=dict(color=BrandColors.ACCENT, width=2, dash="dash"),
     )
 
-    fig.update_layout(
-        **get_plotly_theme(
-            title='📈 Eficiencia Mensual en la Valoración',
-            height=ChartHeights.LARGE,
-            show_legend=False
-        )
+    theme = get_plotly_theme(
+        title=' Eficiencia Mensual en la Valoración',
+        height=ChartHeights.LARGE,
+        show_legend=False
     )
+    theme["margin"] = {"l": 60, "r": 20, "t": 80, "b": 60}
+    fig.update_layout(**theme)
     fig.update_xaxes(title_text='Mes')
     fig.update_yaxes(title_text='Eficiencia (%)', range=[0, 100], ticksuffix='%')
 

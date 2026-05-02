@@ -242,20 +242,33 @@ def render_comparativo_anual(df):
                 x_meses.append(month_names.get(mes, str(mes)))
                 y_valores.append(0)
 
+        # Preparar textos abreviados para cada barra
+        textos = []
+        for v in y_valores:
+            if pd.isna(v) or v == 0:
+                textos.append('')
+            elif abs(v) >= 1000000:
+                textos.append(f'{v/1000000:.1f}M')
+            else:
+                textos.append(f'{v/1000:.1f}k')
+
         fig.add_trace(go.Bar(
             x=x_meses,
             y=y_valores,
             name=str(int(año)),
             marker_color=color,
+            text=textos,
+            textposition='outside',
+            textfont=dict(size=11, color='white'),
             hovertemplate=f"<b>Año {int(año)}</b><br>Mes: %{{x}}<br>Ahorro: $%{{y:,.0f}}<extra></extra>"
         ))
 
-    fig.update_layout(
-        **get_plotly_theme(
-            title="📅 Comparativo Anual: Ahorro Mensual por Año",
-            height=ChartHeights.XLARGE,
-        )
+    theme = get_plotly_theme(
+        title="📅 Comparativo Anual: Ahorro Mensual por Año",
+        height=ChartHeights.XLARGE,
     )
+    theme["margin"] = {"l": 60, "r": 20, "t": 80, "b": 60}
+    fig.update_layout(**theme)
     fig.update_xaxes(title_text="Mes")
     fig.update_yaxes(title_text="Ahorro ($)", tickformat="$,.0f")
     fig.update_layout(barmode="group")
