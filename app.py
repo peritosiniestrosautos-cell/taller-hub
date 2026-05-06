@@ -37,6 +37,7 @@ from modules.visualizations import (
 from modules.imprevistos_visualizations import (
     render_grafico_tasa_imprevistos_nuevo,
     render_grafico_culpa_taller_mensual,
+    render_demora_definicion_imprevisto,
 )
 
 # Importar visualizaciones multitaller
@@ -291,6 +292,11 @@ def main():
 
     with col2:
         render_grafico_culpa_taller_mensual(df=df_filtered)
+
+    st.divider()
+
+    # Gráfico: Demora en Definición del Imprevisto por CIA y Estatus
+    render_demora_definicion_imprevisto(df=df_filtered)
 
     st.divider()
     

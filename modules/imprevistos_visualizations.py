@@ -670,6 +670,299 @@ def render_grafico_culpa_taller_mensual(df=None):
 
 
 # ============================================================================
+# DEMORA EN DEFINICIÓN DEL IMPREVISTO POR CIA Y ESTATUS
+# ============================================================================
+
+def render_demora_definicion_imprevisto(df=None, año: int = None):
+    """
+    Gráfico de barras agrupadas: Demora en definición del imprevisto por CIA y Estatus.
+
+    Muestra el promedio de días entre FECHA_INGR y FECHA_AUTO, agrupado por
+    compañía de seguros (CIA) y estatus (AUTORIZADO / RECHAZADO).
+
+    Reglas:
+    - Deduplicación por PLACA + SINIESTRO (solo se admite 1 registro por combinación)
+    - Todos los registros con fechas válidas son considerados
+    - Delay = abs(FECHA_AUTO - FECHA_INGR) en días
+    """
+    import datetime
+
+    st.subheader("⏱️ Demora en Definición del Imprevisto")
+
+    if df is None or df.empty:
+        st.info("No hay datos disponibles para mostrar.")
+        return
+
+    required_cols = {'FECHA_INGR', 'FECHA_AUTO', 'COMPAÑIA_DE_SEGUROS', 'ESTATUS', 'PLACA'}
+    if not required_cols.issubset(df.columns):
+        faltantes = required_cols - set(df.columns)
+        st.warning(f"Faltan columnas necesarias: {', '.join(faltantes)}")
+        return
+
+    df_w = df.copy()
+
+    # --- Filtro por año ---
+    if año and 'AÑO' in df_w.columns:
+        df_w['_AÑO'] = pd.to_numeric(df_w['AÑO'], errors='coerce')
+        df_w = df_w[df_w['_AÑO'] == año].copy()
+    elif año:
+        st.warning("Columna AÑO no disponible, se muestran todos los datos.")
+
+    if df_w.empty:
+        st.info(f"No hay datos para el año {año}." if año else "No hay datos disponibles.")
+        return
+
+    # --- Selector de año interactivo ---
+    if 'AÑO' in df.columns:
+        años_disponibles = sorted(
+            pd.to_numeric(df['AÑO'], errors='coerce').dropna().unique().tolist(),
+            reverse=True
+        )
+        año_actual = datetime.datetime.now().year
+        default_idx = años_disponibles.index(año_actual) if año_actual in años_disponibles else 0
+        año_sel = st.selectbox(
+            "Año",
+            options=años_disponibles,
+            index=default_idx,
+            key="demora_definicion_año"
+        )
+        df_w = df.copy()
+        df_w['_AÑO'] = pd.to_numeric(df_w['AÑO'], errors='coerce')
+        df_w = df_w[df_w['_AÑO'] == año_sel].copy()
+        if df_w.empty:
+            st.info(f"No hay datos para el año {año_sel}.")
+            return
+    else:
+        año_sel = año
+
+    # --- Limpiar PLACA y SINIESTRO para deduplicación ---
+    df_w['_PLACA'] = df_w['PLACA'].astype(str).str.upper().str.strip()
+    df_w['_SINIESTRO'] = (
+        df_w['SINIESTRO'].astype(str).str.upper().str.strip()
+        if 'SINIESTRO' in df_w.columns
+        else ''
+    )
+
+    # --- Validación estricta de fechas con diagnóstico ---
+    total_registros = len(df_w)
+    invalidados = {}
+
+    # DIAGNÓSTICO: estado inicial de las columnas de fecha
+    diag_ingr_tipo = str(df_w['FECHA_INGR'].dtype)
+    diag_auto_tipo = str(df_w['FECHA_AUTO'].dtype)
+    diag_ingr_muestra = df_w['FECHA_INGR'].dropna().head(5).tolist()
+    diag_auto_muestra = df_w['FECHA_AUTO'].dropna().head(5).tolist()
+
+    # 1. Forzar conversión a datetime SIEMPRE (no solo si no es datetime64)
+    for col in ['FECHA_INGR', 'FECHA_AUTO']:
+        df_w[col] = pd.to_datetime(df_w[col], errors='coerce', dayfirst=True)
+
+    # 2. Registrar y descartar registros con FECHA_INGR inválida (NaT)
+    mask_ingr_na = df_w['FECHA_INGR'].isna()
+    invalidados['FECHA_INGR vacía o inválida'] = int(mask_ingr_na.sum())
+    df_w_with_ingr = df_w[~mask_ingr_na].copy()
+
+    # 3. Registrar y descartar registros con FECHA_AUTO inválida (NaT)
+    mask_auto_na = df_w['FECHA_AUTO'].isna()
+    invalidados['FECHA_AUTO vacía o inválida'] = int(mask_auto_na.sum())
+    df_w = df_w[~mask_auto_na].copy()
+
+    # 4. Descartar fechas fuera de rango razonable (año < 2000 o > año actual + 1)
+    año_limite = datetime.datetime.now().year + 1
+    mask_fecha_irreal = (
+        (df_w['FECHA_INGR'].dt.year < 2000) | (df_w['FECHA_INGR'].dt.year > año_limite) |
+        (df_w['FECHA_AUTO'].dt.year < 2000) | (df_w['FECHA_AUTO'].dt.year > año_limite)
+    )
+    invalidados['Fechas fuera de rango (año < 2000 o > {})'.format(año_limite)] = int(mask_fecha_irreal.sum())
+    df_w = df_w[~mask_fecha_irreal].copy()
+
+    if df_w.empty:
+        st.warning("No hay registros con ambas fechas (FECHA_INGR y FECHA_AUTO) válidas.")
+        detalles = [f"- {motivo}: {cant}" for motivo, cant in invalidados.items() if cant > 0]
+        if detalles:
+            st.caption("Registros descartados:\n" + "\n".join(detalles))
+        return
+
+    # --- Calcular demora en días (valor absoluto) ---
+    df_w['_DEMORA_DIAS'] = abs((df_w['FECHA_AUTO'] - df_w['FECHA_INGR']).dt.days)
+
+    # --- Filtrar estatus AUTORIZADO y RECHAZADO únicamente ---
+    mask_estatus_invalido = ~df_w['ESTATUS'].isin(['AUTORIZADO', 'RECHAZADO'])
+    invalidados['Estatus no es AUTORIZADO ni RECHAZADO'] = int(mask_estatus_invalido.sum())
+    df_w = df_w[~mask_estatus_invalido].copy()
+
+    if df_w.empty:
+        st.warning("No hay registros con estatus AUTORIZADO o RECHAZADO que tengan fechas válidas.")
+        return
+
+    # --- Deduplicación por PLACA + SINIESTRO ---
+    total_antes = len(df_w)
+    df_w = df_w.drop_duplicates(subset=['_PLACA', '_SINIESTRO'], keep='first')
+    dup_eliminados = total_antes - len(df_w)
+    if dup_eliminados > 0:
+        invalidados['Duplicados (misma PLACA + SINIESTRO)'] = dup_eliminados
+
+    registros_validos = len(df_w)
+
+    # --- Diagnóstico visible (siempre mostrado para auditoría) ---
+    total_descartados = total_registros - registros_validos
+    st.caption(
+        f"🔍 **Diagnóstico:** {total_registros} registros entrantes → "
+        f"{registros_validos} válidos ({total_descartados} descartados)"
+    )
+    cols_diag = st.columns(4 if len(invalidados) >= 4 else len(invalidados) or 1)
+    col_idx = 0
+    for motivo, cant in invalidados.items():
+        if cant > 0:
+            with cols_diag[col_idx % len(cols_diag)]:
+                st.metric(motivo, cant)
+            col_idx += 1
+
+    # Datos crudos de diagnóstico de fechas
+    with st.expander("🔧 Diagnóstico avanzado de fechas", expanded=False):
+        st.caption(f"**Tipo FECHA_INGR:** `{diag_ingr_tipo}`")
+        st.caption(f"**Muestra FECHA_INGR (primeros 5):** {diag_ingr_muestra}")
+        st.caption(f"**Tipo FECHA_AUTO:** `{diag_auto_tipo}`")
+        st.caption(f"**Muestra FECHA_AUTO (primeros 5):** {diag_auto_muestra}")
+        st.caption(f"**Año seleccionado:** {año_sel}")
+
+        # Mostrar también cuántos registros originales tenían FECHA_INGR vs cuántos sobrevivieron
+        st.caption(f"**Registros con FECHA_INGR presente (antes de filtrar año):** "
+                   f"{total_registros - invalidados.get('FECHA_INGR vacía o inválida', 0)}")
+        st.caption(f"**Registros con FECHA_AUTO presente (antes de filtrar año):** "
+                   f"{total_registros - invalidados.get('FECHA_AUTO vacía o inválida', 0)}")
+
+    # --- Agrupar por CIA y ESTATUS ---
+    df_agrupado = df_w.groupby(['COMPAÑIA_DE_SEGUROS', 'ESTATUS']).agg(
+        promedio_demora=('_DEMORA_DIAS', 'mean'),
+        conteo=('_DEMORA_DIAS', 'count')
+    ).reset_index()
+
+    df_agrupado['promedio_demora'] = df_agrupado['promedio_demora'].round(1)
+
+    if df_agrupado.empty:
+        st.info("No hay datos suficientes para mostrar el gráfico.")
+        return
+
+    # --- Pivot para tener AUTORIZADO y RECHAZADO como columnas (para el gráfico) ---
+    df_pivot = df_agrupado.pivot_table(
+        index='COMPAÑIA_DE_SEGUROS',
+        columns='ESTATUS',
+        values=['promedio_demora', 'conteo'],
+        fill_value=0
+    )
+
+    # Aplanar columnas del pivot
+    df_pivot.columns = [f'{val}_{est}' for val, est in df_pivot.columns]
+    df_pivot = df_pivot.reset_index()
+
+    # Asegurar que existan ambas columnas
+    for estatus in ['AUTORIZADO', 'RECHAZADO']:
+        for metric in ['promedio_demora', 'conteo']:
+            col_name = f'{metric}_{estatus}'
+            if col_name not in df_pivot.columns:
+                df_pivot[col_name] = 0
+
+    # Ordenar por promedio total descendente
+    df_pivot['_total_promedio'] = df_pivot['promedio_demora_AUTORIZADO'] + df_pivot['promedio_demora_RECHAZADO']
+    df_pivot = df_pivot.sort_values('_total_promedio', ascending=False).reset_index(drop=True)
+
+    if df_pivot.empty:
+        st.info("No hay datos suficientes para mostrar el gráfico.")
+        return
+
+    # --- Construir gráfico de barras agrupadas ---
+    cia_list = df_pivot['COMPAÑIA_DE_SEGUROS'].tolist()
+
+    fig = go.Figure()
+
+    # Barra AUTORIZADO
+    fig.add_trace(go.Bar(
+        x=cia_list,
+        y=df_pivot['promedio_demora_AUTORIZADO'],
+        name='AUTORIZADO',
+        marker_color=SemanticColors.SUCCESS,
+        text=df_pivot.apply(
+            lambda r: f"{r['promedio_demora_AUTORIZADO']:.1f}d ({int(r['conteo_AUTORIZADO'])})",
+            axis=1
+        ),
+        textposition='outside',
+        textfont=dict(size=11, color='white'),
+        hovertemplate=(
+            '%{x}<br>'
+            'Promedio: %{y:.1f} días<br>'
+            'Conteo: %{customdata}<br>'
+            'Estatus: AUTORIZADO<extra></extra>'
+        ),
+        customdata=df_pivot['conteo_AUTORIZADO'].astype(int).tolist(),
+    ))
+
+    # Barra RECHAZADO
+    fig.add_trace(go.Bar(
+        x=cia_list,
+        y=df_pivot['promedio_demora_RECHAZADO'],
+        name='RECHAZADO',
+        marker_color=SemanticColors.ERROR,
+        text=df_pivot.apply(
+            lambda r: f"{r['promedio_demora_RECHAZADO']:.1f}d ({int(r['conteo_RECHAZADO'])})",
+            axis=1
+        ),
+        textposition='outside',
+        textfont=dict(size=11, color='white'),
+        hovertemplate=(
+            '%{x}<br>'
+            'Promedio: %{y:.1f} días<br>'
+            'Conteo: %{customdata}<br>'
+            'Estatus: RECHAZADO<extra></extra>'
+        ),
+        customdata=df_pivot['conteo_RECHAZADO'].astype(int).tolist(),
+    ))
+
+    fig.update_layout(
+        **get_plotly_theme(
+            title='⏱️ Demora en Definición del Imprevisto por CIA y Estatus',
+            height=ChartHeights.LARGE,
+            show_legend=True
+        )
+    )
+    fig.update_xaxes(title_text='Compañía de Seguros (CIA)', tickangle=-30)
+    fig.update_yaxes(title_text='Promedio de Días de Demora', tickformat='.0f', ticksuffix='d')
+
+    st.plotly_chart(fig, width="stretch", use_container_width=True)
+
+    # --- Métricas resumen ---
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("📋 Total Registros Únicos", len(df_w))
+    with col2:
+        st.metric("📊 Promedio General (días)", f"{df_w['_DEMORA_DIAS'].mean():.1f}")
+    with col3:
+        st.metric("✅ Autorizados", int(len(df_w[df_w['ESTATUS'] == 'AUTORIZADO'])))
+    with col4:
+        st.metric("❌ Rechazados", int(len(df_w[df_w['ESTATUS'] == 'RECHAZADO'])))
+
+    # --- Tabla resumen ---
+    with st.expander("📋 Ver Tabla de Detalle"):
+        df_tabla = df_pivot[[
+            'COMPAÑIA_DE_SEGUROS',
+            'promedio_demora_AUTORIZADO',
+            'conteo_AUTORIZADO',
+            'promedio_demora_RECHAZADO',
+            'conteo_RECHAZADO'
+        ]].copy()
+        df_tabla.columns = [
+            'Compañía de Seguros',
+            'Promedio Autorizado (días)',
+            'Cant. Autorizados',
+            'Promedio Rechazado (días)',
+            'Cant. Rechazados'
+        ]
+        df_tabla['Promedio Autorizado (días)'] = df_tabla['Promedio Autorizado (días)'].round(1)
+        df_tabla['Promedio Rechazado (días)'] = df_tabla['Promedio Rechazado (días)'].round(1)
+        st.dataframe(df_tabla, width="stretch", hide_index=True)
+
+
+# ============================================================================
 # MAIN VISUALIZATION ENTRY POINT
 # ============================================================================
 
