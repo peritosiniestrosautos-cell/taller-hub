@@ -203,6 +203,118 @@ def calculate_fees_for_df(df, config=None):
     return result
 
 
+def calculate_fees_per_month(df, config=None):
+    """
+    Calculate fees on a per-month basis. Each month's recovery is evaluated
+    independently against the threshold rule (not accumulated).
+    
+    Args:
+        df: DataFrame with DIFERENCIA, AÑO, MES columns (and optionally TALLER_ORIGEN)
+        config: Fee configuration
+    
+    Returns:
+        dict: {
+            'total_honorarios': float,
+            'total_savings': float,
+            'monthly_percentages': {period_key: fee_percentage},  # for chart use
+            'by_month': [dict per month],
+            'by_taller': {taller_id: {...}}  # multitaller only
+        }
+    """
+    if config is None:
+        config = load_fee_config()
+    
+    df = filter_authorized_savings_records(df)
+    
+    result = {
+        'total_honorarios': 0.0,
+        'total_savings': 0.0,
+        'monthly_percentages': {},
+        'by_month': [],
+        'by_taller': {}
+    }
+    
+    if df is None or df.empty or 'DIFERENCIA' not in df.columns:
+        return result
+    
+    if 'AÑO' not in df.columns or 'MES' not in df.columns:
+        return result
+    
+    has_taller = 'TALLER_ORIGEN' in df.columns and df['TALLER_ORIGEN'].nunique() > 1
+    
+    if has_taller:
+        for taller in df['TALLER_ORIGEN'].unique():
+            df_taller = df[df['TALLER_ORIGEN'] == taller]
+            taller_result = _calculate_fees_per_month_single(df_taller, taller, config)
+            result['total_honorarios'] += taller_result['total_honorarios']
+            result['total_savings'] += taller_result['total_savings']
+            result['by_taller'][taller] = taller_result
+        
+        # Also populate consolidated monthly_percentages for the combined chart
+        # using global threshold rule on aggregated per-month totals
+        consolidated_result = _calculate_fees_per_month_single(df, None, config)
+        result['monthly_percentages'] = consolidated_result['monthly_percentages']
+        result['by_month'] = consolidated_result['by_month']
+    else:
+        taller_id = df['TALLER_ORIGEN'].iloc[0] if 'TALLER_ORIGEN' in df.columns else None
+        single_result = _calculate_fees_per_month_single(df, taller_id, config)
+        result['total_honorarios'] = single_result['total_honorarios']
+        result['total_savings'] = single_result['total_savings']
+        result['monthly_percentages'] = single_result['monthly_percentages']
+        result['by_month'] = single_result['by_month']
+    
+    return result
+
+
+def _calculate_fees_per_month_single(df, taller_id, config):
+    """
+    Internal: calculate per-month fees for a single workshop's DataFrame.
+    """
+    df_valid = df[(df['AÑO'].notna()) & (df['MES'].notna()) &
+                  (df['AÑO'] > 2000) & (df['MES'] >= 1) & (df['MES'] <= 12)]
+    
+    result = {
+        'total_honorarios': 0.0,
+        'total_savings': 0.0,
+        'monthly_percentages': {},
+        'by_month': []
+    }
+    
+    if df_valid.empty:
+        return result
+    
+    monthly = df_valid.groupby(['AÑO', 'MES'])['DIFERENCIA'].sum().reset_index()
+    monthly.columns = ['AÑO', 'MES', 'RECUPERACION']
+    
+    for _, row in monthly.iterrows():
+        recovery = row['RECUPERACION']
+        fee = calculate_fee(recovery, taller_id, config)
+        period = f"{int(row['MES']):02d}/{int(row['AÑO'])}"
+        
+        result['total_savings'] += recovery
+        result['total_honorarios'] += fee['fee_amount']
+        result['monthly_percentages'][period] = fee['fee_percentage'] * 100
+        result['by_month'].append({
+            'AÑO': int(row['AÑO']),
+            'MES': int(row['MES']),
+            'RECUPERACION': recovery,
+            'fee_percentage': fee['fee_percentage'] * 100,
+            'VALOR_HONORARIOS': fee['fee_amount'],
+            'rule_applied': fee['rule_applied']
+        })
+    
+    return result
+
+
+def _calculate_fees_per_month_for_taller(df, taller_id, config):
+    """
+    Internal: calculate per-month fees for a specific workshop.
+    Returns total honorarios and per-month breakdown.
+    """
+    df_taller = df[df['TALLER_ORIGEN'] == taller_id]
+    return _calculate_fees_per_month_single(df_taller, taller_id, config)
+
+
 def format_currency(value):
     """Format value as currency string"""
     return f"${value:,.0f}"

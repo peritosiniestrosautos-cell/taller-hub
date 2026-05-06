@@ -15,7 +15,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+
 from datetime import datetime
 
 from .imprevistos_config import (
@@ -46,17 +46,11 @@ def render_grafico_tasa_imprevistos_nuevo(
     key_suffix: str = ""
 ):
     """
-    RF-NEW: Gráfico combinado de barras + línea para tasa de imprevistos.
-    
-    - Barras: Cantidad de vehículos y cantidad de imprevistos
-    - Línea: Tasa de imprevistos (%)
-    
-    Similar to the reference image provided.
+    Gráfico simple de línea: tasa de imprevistos mensual (%).
     """
     
     st.subheader("📊 Tasa de Imprevistos Mensual")
     
-    # Extract imprevistos from DataFrame
     if df is None or df.empty:
         st.info("No hay datos disponibles para mostrar.")
         return
@@ -70,36 +64,27 @@ def render_grafico_tasa_imprevistos_nuevo(
         st.caption("💡 Los imprevistos se detectan cuando ACCION='CAMBIO' o IMPREVISTO no está vacío")
         return
     
-    # Get total vehicles per month
     df_all = df.copy()
     if 'AÑO' in df_all.columns and 'MES' in df_all.columns:
         df_all['año'] = pd.to_numeric(df_all['AÑO'], errors='coerce')
         df_all['mes'] = pd.to_numeric(df_all['MES'], errors='coerce')
         
-        # Filter by año if specified
         if año:
             df_all = df_all[df_all['año'] == año]
             df_imprevistos = df_imprevistos[df_imprevistos['año'] == año]
         
-        # Monthly imprevistos count (deduplicated by placa+siniestro)
         df_imp_mes = resumir_imprevistos_mensuales(df=df, año=año)
         
-        # ----------------------------------------------------------------
-        # TOTAL VEHÍCULOS: desde hoja "TASA DE IMPREVISTOS" del sheets
-        # ----------------------------------------------------------------
         df_tasa_sheets = st.session_state.get("tasa_imprevistos_data")
         if df_tasa_sheets is not None and not df_tasa_sheets.empty:
             df_tasa_filtered = df_tasa_sheets.copy()
             if año:
                 df_tasa_filtered = df_tasa_filtered[df_tasa_filtered['AÑO'] == año]
             
-            # Sumar totales por año+mes (across all talleres)
             df_vehiculos = df_tasa_filtered.groupby(['AÑO', 'MES']).agg(
                 total_vehiculos=('TOTAL', 'sum')
             ).reset_index()
             df_vehiculos = df_vehiculos.rename(columns={'AÑO': 'año', 'MES': 'mes'})
-            
-            # Asegurar tipos numéricos consistentes
             df_vehiculos['año'] = df_vehiculos['año'].astype(int)
             df_vehiculos['mes'] = df_vehiculos['mes'].astype(int)
         else:
@@ -110,36 +95,20 @@ def render_grafico_tasa_imprevistos_nuevo(
             df_vehiculos['año'] = df_vehiculos['año'].astype(int)
             df_vehiculos['mes'] = df_vehiculos['mes'].astype(int)
         
-        # Merge vehículos + imprevistos (outer para no perder meses)
         df_resumen = df_vehiculos.merge(df_imp_mes, on=['año', 'mes'], how='outer')
         df_resumen['total_vehiculos'] = df_resumen['total_vehiculos'].fillna(0).astype(int)
         df_resumen['total_imprevistos'] = df_resumen['total_imprevistos'].fillna(0).astype(int)
-        df_resumen['culpa_taller'] = df_resumen['culpa_taller'].fillna(0).astype(int)
-        df_resumen['no_culpa_taller'] = df_resumen['total_imprevistos'] - df_resumen['culpa_taller']
         
-        # Calcular tasas (evitar división por cero)
         df_resumen['tasa'] = df_resumen.apply(
             lambda r: (r['total_imprevistos'] / r['total_vehiculos'] * 100) if r['total_vehiculos'] > 0 else 0,
             axis=1
         ).round(1)
         
-        df_resumen['tasa_culpa_taller'] = df_resumen.apply(
-            lambda r: (r['culpa_taller'] / r['total_vehiculos'] * 100) if r['total_vehiculos'] > 0 else 0,
-            axis=1
-        ).round(1)
-        
-        df_resumen['tasa_no_culpa_taller'] = df_resumen.apply(
-            lambda r: (r['no_culpa_taller'] / r['total_vehiculos'] * 100) if r['total_vehiculos'] > 0 else 0,
-            axis=1
-        ).round(1)
-        
-        # Create month labels usando el año real
         df_resumen["mes_nombre"] = df_resumen.apply(
             lambda row: datetime(int(row["año"]), int(row["mes"]), 1).strftime('%b %Y'),
             axis=1
         )
         
-        # Sort by month
         df_resumen = df_resumen.sort_values(['año', 'mes'])
     else:
         st.warning("No se encontraron columnas de fecha (AÑO/MES) en los datos.")
@@ -149,106 +118,41 @@ def render_grafico_tasa_imprevistos_nuevo(
         st.info("No hay datos para el período seleccionado.")
         return
     
-    # Create the combined chart
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig = go.Figure()
     
-    # Add bars for vehicles
-    fig.add_trace(
-        go.Bar(
-            x=df_resumen["mes_nombre"],
-            y=df_resumen["total_vehiculos"],
-            name="Cantidad Vehículos",
-            marker_color=BrandColors.PRIMARY,
-            opacity=0.6,
-            offsetgroup=0
-        ),
-        secondary_y=False
-    )
-
-    # Add bars for imprevistos
-    fig.add_trace(
-        go.Bar(
-            x=df_resumen["mes_nombre"],
-            y=df_resumen["total_imprevistos"],
-            name="Cantidad Imprevistos",
-            marker_color=SemanticColors.WARNING,
-            opacity=0.7,
-            offsetgroup=1
-        ),
-        secondary_y=False
-    )
-
-    # Add line for rate (%)
     fig.add_trace(
         go.Scatter(
             x=df_resumen["mes_nombre"],
             y=df_resumen["tasa"],
             mode='lines+markers',
             name='Tasa de Imprevistos (%)',
-            line=dict(color=SemanticColors.ERROR, width=3),
-            marker=dict(size=8, color=SemanticColors.ERROR, line=dict(width=2, color='white'))
-        ),
-        secondary_y=True
+            line=dict(color=BrandColors.PRIMARY, width=3),
+            marker=dict(size=8, color=BrandColors.PRIMARY, line=dict(width=2, color='white')),
+            hovertemplate='%{x}: %{y}%<extra></extra>',
+        )
     )
-
-    # Update layout
+    
     fig.update_layout(
-        title='📊 Tasa de Imprevistos - Vehículos vs Imprevistos vs Tasa',
+        title='Tasa de Imprevistos Mensual',
         height=ChartHeights.XLARGE,
         hovermode='x unified',
-        legend=dict(
-            orientation='h',
-            yanchor='bottom',
-            y=1.02,
-            xanchor='right',
-            x=1
-        ),
-        bargap=0.15,
-        bargroupgap=0.1
+        margin=dict(t=50, b=20, l=20, r=20),
     )
     
-    # Update axes
-    fig.update_xaxes(title_text="Mes")
+    fig.update_xaxes(title_text="")
+    fig.update_yaxes(title_text="Tasa (%)", ticksuffix="%")
     
-    fig.update_yaxes(
-        title_text="Cantidad",
-        secondary_y=False
-    )
-    
-    fig.update_yaxes(
-        title_text="Tasa (%)",
-        secondary_y=True,
-        ticksuffix="%"
-    )
-    
-    # Add annotations for the rate values
-    for i, row in df_resumen.iterrows():
+    for _, row in df_resumen.iterrows():
         fig.add_annotation(
             x=row["mes_nombre"],
             y=row["tasa"],
             text=f"{row['tasa']:.1f}%",
             showarrow=False,
             yshift=10,
-            font=dict(size=10, color=SemanticColors.ERROR)
+            font=dict(size=10, color=BrandColors.PRIMARY)
         )
     
     st.plotly_chart(fig, width="stretch", use_container_width=True)
-    
-    # Show summary metrics
-    total_veh = df_resumen["total_vehiculos"].sum()
-    total_imp = df_resumen["total_imprevistos"].sum()
-    tasa_prom = df_resumen["tasa"].mean()
-    culpa_total = df_resumen["culpa_taller"].sum()
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("🚗 Total Vehículos", f"{total_veh:,}")
-    with col2:
-        st.metric("⚠️ Total Imprevistos", f"{total_imp:,}")
-    with col3:
-        st.metric("📊 Tasa Promedio", f"{tasa_prom:.1f}%")
-    with col4:
-        st.metric("🏪 Culpa del Taller", f"{int(culpa_total):,}")
 
 
 # ============================================================================
@@ -743,7 +647,7 @@ def render_grafico_culpa_taller_mensual(df=None):
 
     fig.update_layout(
         **get_plotly_theme(
-            title='🔧 Imprevistos con Cambio de Repuesto - Culpa del Taller',
+            title='🔧 Imprevistos con Cambio de Repuesto',
             height=ChartHeights.MEDIUM,
             show_legend=False
         )

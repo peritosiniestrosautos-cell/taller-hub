@@ -8,31 +8,45 @@ Componentes reutilizables para el dashboard.
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from typing import List
 from .data_processor import filter_authorized_savings_records
 from .theme import GrayScale
+from .taller_config import get_nombre_taller
 
 
-def render_header():
+def _get_taller_display_name(talleres_seleccionados: List[str]) -> str:
+    """Obtiene el nombre para mostrar según los talleres seleccionados"""
+    if not talleres_seleccionados:
+        return "Taller Hub"
+    nombres = [get_nombre_taller(tid) for tid in talleres_seleccionados]
+    return " | ".join(nombres)
+
+
+def render_header(talleres_seleccionados: List[str] = None):
     """Renderiza el header principal del dashboard"""
+    taller_nombre = _get_taller_display_name(talleres_seleccionados or [])
+
     col_logo, col_title = st.columns([1, 5])
 
     with col_logo:
         st.image("logo.png", width=100)
 
     with col_title:
-        st.markdown('<div class="main-header">🚗 TALLER HUB</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="main-header">🚗 {taller_nombre.upper()}</div>', unsafe_allow_html=True)
         st.markdown(
             '<div class="sub-header">Sistema de Gestión de Ahorros y Análisis de Talleres Automotrices</div>',
             unsafe_allow_html=True
         )
 
 
-def render_footer():
+def render_footer(talleres_seleccionados: List[str] = None):
     """Renderiza el footer del dashboard"""
+    taller_nombre = _get_taller_display_name(talleres_seleccionados or [])
+
     st.divider()
     st.markdown(f"""
     <div style="text-align: center; color: {GrayScale.SLATE_400}; font-size: 0.8rem; padding: 2rem 0;">
-        <p>Taller Hub v2.0 | Desarrollado para RENOMOTRIZ</p>
+        <p>{taller_nombre} v2.0 | Desarrollado para RENOMOTRIZ</p>
         <p>Stakeholders: Alexander Cano (Analista) | Sergio Romero (Operativo)</p>
     </div>
     """, unsafe_allow_html=True)
@@ -125,13 +139,16 @@ def render_data_info(df, df_filtered):
         st.info(f"📊 Mostrando {len(df_filtered)} de {len(df)} registros (filtros aplicados)")
 
 
-def render_export_section(df_filtered, filtros):
+def render_export_section(df_filtered, filtros, talleres_seleccionados=None):
     """Sección de exportación de datos"""
     from .exporters import generate_excel_report, generate_csv_export, generate_pdf_report
     from .fee_config import load_fee_config
 
     st.divider()
     st.header("📥 Exportación de Datos")
+
+    taller_nombre = _get_taller_display_name(talleres_seleccionados or [])
+    taller_slug = taller_nombre.lower().replace(" ", "_").replace("|", "_")
 
     # Toggle para incluir honorarios en PDF
     fee_config = load_fee_config()
@@ -145,11 +162,11 @@ def render_export_section(df_filtered, filtros):
 
     # Exportar Excel
     with col_exp1:
-        excel_buffer = generate_excel_report(df_filtered, filtros)
+        excel_buffer = generate_excel_report(df_filtered, filtros, taller_nombre)
         st.download_button(
             label="📊 Descargar Excel (Múltiples hojas)",
             data=excel_buffer,
-            file_name=f"taller_hub_reporte_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            file_name=f"{taller_slug}_reporte_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width='stretch'
         )
@@ -160,19 +177,19 @@ def render_export_section(df_filtered, filtros):
         st.download_button(
             label="📄 Descargar CSV",
             data=csv_data,
-            file_name=f"taller_hub_datos_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            file_name=f"{taller_slug}_datos_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv",
             width='stretch'
         )
 
     # Generar PDF
     with col_exp3:
-        pdf_buffer = generate_pdf_report(df_filtered, filtros, include_honorarios=include_honorarios)
+        pdf_buffer = generate_pdf_report(df_filtered, filtros, include_honorarios=include_honorarios, taller_nombre=taller_nombre)
         honorarios_text = "con" if include_honorarios else "sin"
         st.download_button(
             label=f"📑 Descargar PDF ({honorarios_text} honorarios)",
             data=pdf_buffer,
-            file_name=f"taller_hub_dashboard_{honorarios_text}_honorarios_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+            file_name=f"{taller_slug}_dashboard_{honorarios_text}_honorarios_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
             mime="application/pdf",
             width='stretch'
         )

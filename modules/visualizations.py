@@ -13,7 +13,7 @@ from datetime import datetime
 
 from .config import PORCENTAJE_HONORARIOS
 from .data_processor import add_log, filter_authorized_savings_records
-from .fee_config import calculate_fee, load_fee_config, calculate_fees_for_df
+from .fee_config import load_fee_config, calculate_fees_per_month
 from .chart_config import get_chart_type_for_id, CHART_TYPE_BAR
 from .imprevistos_processor import resumir_imprevistos_mensuales
 from .theme import (
@@ -45,17 +45,22 @@ def render_kpis(df):
         st.info("No hay registros AUTORIZADO para calcular métricas de ahorro.")
         return
 
+    # RF-005.3: Deduplicar por PLACA + SINIESTRO — misma placa con mismo
+    # siniestro solo cuenta una vez. Placas con siniestros distintos sí cuentan.
+    if 'PLACA' in df.columns and 'SINIESTRO' in df.columns:
+        df = df.drop_duplicates(subset=['PLACA', 'SINIESTRO'], keep='first')
+
     total_ahorro = df['DIFERENCIA'].sum()
     total_registros = len(df)
     reparaciones_con_ahorro = len(df[df['DIFERENCIA'] > 0])
     promedio_ahorro = df[df['DIFERENCIA'] > 0]['DIFERENCIA'].mean() if reparaciones_con_ahorro > 0 else 0
 
-    # Cálculo de honorarios con regla de umbral por taller
+    # Cálculo de honorarios por mes (regla de umbral por taller, evaluada mes a mes)
     fee_config = load_fee_config()
-    fee_info = calculate_fees_for_df(df, fee_config)
+    fee_info = calculate_fees_per_month(df, fee_config)
     
-    # Total honorarios (sum of all workshops if multitaller)
-    honorarios = fee_info['total']['fee_amount']
+    # Total honorarios = sum of per-month (and per-taller) fees
+    honorarios = fee_info['total_honorarios']
     utilidad = total_ahorro - honorarios
     
     # Check presentation mode
@@ -85,30 +90,45 @@ def render_kpis(df):
             </div>
             """, unsafe_allow_html=True)
         else:
+            # Calculate effective rate for display
+            effective_rate = (honorarios / total_ahorro * 100) if total_ahorro > 0 else 0
+            
             if es_multitaller and fee_info['by_taller']:
-                rule_label = "Mixto (ver detalle)"
                 st.markdown(f"""
                 <div class="kpi-container kpi-honorarios">
                     <div class="kpi-value">${honorarios:,.0f}</div>
                     <div class="kpi-label">📊 Debe Cobrar (Total)</div>
-                    <div class="kpi-delta">{len(fee_info['by_taller'])} talleres con tarifas individuales</div>
+                    <div class="kpi-delta">{len(fee_info['by_taller'])} talleres - Efectivo: {effective_rate:.1f}%</div>
                 </div>
                 """, unsafe_allow_html=True)
 
                 with st.expander("🔍 Ver detalle por taller"):
-                    for taller_id, taller_fee in fee_info['by_taller'].items():
-                        regla = "Premium" if taller_fee['rule_applied'] == 'premium' else "Base"
+                    for taller_id, taller_data in fee_info['by_taller'].items():
+                        t_honorarios = taller_data['total_honorarios']
+                        t_ahorro = taller_data['total_savings']
+                        t_efectivo = (t_honorarios / t_ahorro * 100) if t_ahorro > 0 else 0
+                        meses_base = sum(1 for m in taller_data['by_month'] if m['rule_applied'] == 'base')
+                        meses_premium = sum(1 for m in taller_data['by_month'] if m['rule_applied'] == 'premium')
                         st.markdown(
-                            f"**{taller_id}**: ${taller_fee['fee_amount']:,.0f} "
-                            f"({taller_fee['fee_percentage']*100:.0f}% - {regla})"
+                            f"**{taller_id}**: ${t_honorarios:,.0f} "
+                            f"(Efectivo: {t_efectivo:.1f}% | Base: {meses_base} meses, Premium: {meses_premium} meses)"
                         )
             else:
-                regla = "Premium" if fee_info['total']['rule_applied'] == 'premium' else "Base"
+                # Single workshop: count base vs premium months
+                meses_base = sum(1 for m in fee_info['by_month'] if m['rule_applied'] == 'base')
+                meses_premium = sum(1 for m in fee_info['by_month'] if m['rule_applied'] == 'premium')
+                reglas = []
+                if meses_base:
+                    reglas.append(f"Base: {meses_base} meses")
+                if meses_premium:
+                    reglas.append(f"Premium: {meses_premium} meses")
+                regla_label = " | ".join(reglas) if reglas else "Sin datos"
+                
                 st.markdown(f"""
                 <div class="kpi-container kpi-honorarios">
                     <div class="kpi-value">${honorarios:,.0f}</div>
-                    <div class="kpi-label">📊 Debe Cobrar ({fee_info['total']['fee_percentage']*100:.0f}%)</div>
-                    <div class="kpi-delta">Regla: {regla}</div>
+                    <div class="kpi-label">📊 Debe Cobrar (Efectivo: {effective_rate:.1f}%)</div>
+                    <div class="kpi-delta">{regla_label}</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -457,15 +477,29 @@ def render_recuperacion_mensual(df):
 
     resumen.columns = ['AÑO', 'MES', 'RECUPERACION', 'CANTIDAD', 'VEHICULOS']
     
-    # Apply threshold rule based on total recuperacion
-    # For multitaller, we calculate fees on the total across all workshops
-    fee_info = calculate_fees_for_df(df_valid, fee_config)
+    # Apply threshold rule per month (not accumulated)
+    # Each month's recovery determines its own fee percentage independently
+    fee_info = calculate_fees_per_month(df_valid, fee_config)
     
-    # Use overall fee percentage for the monthly breakdown
-    fee_percentage = fee_info['total']['fee_percentage'] * 100
+    # Build per-month fee lookup from the per-month calculation
+    monthly_pct = fee_info.get('monthly_percentages', {})
     
-    resumen['%_HONORARIOS'] = fee_percentage
-    resumen['VALOR_HONORARIOS'] = resumen['RECUPERACION'] * (fee_percentage / 100)
+    if monthly_pct:
+        # Apply per-month fee percentages
+        resumen['%_HONORARIOS'] = resumen.apply(
+            lambda row: monthly_pct.get(
+                f"{int(row['MES']):02d}/{int(row['AÑO'])}", 18.0
+            ), axis=1
+        )
+    else:
+        # Fallback for multitaller: use by_taller data to build percentages
+        by_taller = fee_info.get('by_taller', {})
+        if by_taller:
+            resumen['%_HONORARIOS'] = fee_config['global_defaults']['base_percentage'] * 100
+        else:
+            resumen['%_HONORARIOS'] = fee_config['global_defaults']['base_percentage'] * 100
+    
+    resumen['VALOR_HONORARIOS'] = resumen['RECUPERACION'] * (resumen['%_HONORARIOS'] / 100)
     resumen['PAGOS'] = resumen['RECUPERACION'] - resumen['VALOR_HONORARIOS']
 
     # Formatear para display
@@ -480,53 +514,70 @@ def render_recuperacion_mensual(df):
     resumen = resumen.copy()
     resumen['PERIODO'] = resumen['MES'].astype(int).astype(str).str.zfill(2) + '/' + resumen['AÑO'].astype(int).astype(str)
 
-    # Render chart for monthly recovery
+    # Render chart: VALOR_HONORARIOS as primary metric, RECUPERACION as reference
     chart_type = get_chart_type_for_id('recuperacion_mensual')
 
     fig = go.Figure()
 
     if chart_type == CHART_TYPE_BAR:
-        # Preparar textos abreviados para cada barra
+        # Preparar textos con % de honorarios para cada barra
         textos = []
-        for v in resumen['RECUPERACION']:
-            if pd.isna(v):
-                textos.append('')
-            elif abs(v) >= 1000000:
-                textos.append(f'{v/1000000:.1f}M')
-            else:
-                textos.append(f'{v/1000:.1f}k')
+        for _, r in resumen.iterrows():
+            pct = r['%_HONORARIOS']
+            textos.append(f'{pct:.1f}%')
 
+        fig.add_trace(go.Bar(
+            x=resumen['PERIODO'],
+            y=resumen['VALOR_HONORARIOS'],
+            name='Honorarios',
+            marker_color=BrandColors.SECONDARY,
+            marker_line_width=0,
+            text=textos,
+            textposition='outside',
+            textfont=dict(size=13, color='white')
+        ))
+        
+        # RECUPERACION as faint reference bars behind
         fig.add_trace(go.Bar(
             x=resumen['PERIODO'],
             y=resumen['RECUPERACION'],
             name='Recuperación',
             marker_color=BrandColors.PRIMARY,
             marker_line_width=0,
-            text=textos,
-            textposition='outside',
-            textfont=dict(size=13, color='white')
+            opacity=0.25,
+            textposition='none'
         ))
     else:
         fig.add_trace(go.Scatter(
             x=resumen['PERIODO'],
-            y=resumen['RECUPERACION'],
+            y=resumen['VALOR_HONORARIOS'],
             mode='lines+markers',
-            name='Recuperación',
-            line=dict(color=BrandColors.PRIMARY, width=3),
+            name='Honorarios',
+            line=dict(color=BrandColors.SECONDARY, width=3),
             marker=dict(size=8, color=BrandColors.SECONDARY, line=dict(width=2, color='white')),
             fill='tozeroy',
-            fillcolor=hex_to_plotly_fill(BrandColors.PRIMARY, 0.1)
+            fillcolor=hex_to_plotly_fill(BrandColors.SECONDARY, 0.15)
+        ))
+
+        # RECUPERACION as faint reference line
+        fig.add_trace(go.Scatter(
+            x=resumen['PERIODO'],
+            y=resumen['RECUPERACION'],
+            mode='lines',
+            name='Recuperación',
+            line=dict(color=BrandColors.PRIMARY, width=1.5, dash='dot'),
+            opacity=0.5
         ))
 
     theme = get_plotly_theme(
-        title=' Evolución de Recuperación Mensual',
+        title=' Evolución de Honorarios Mensuales',
         height=ChartHeights.LARGE,
-        show_legend=False
+        show_legend=True
     )
     theme["margin"] = {"l": 60, "r": 20, "t": 80, "b": 60}
     fig.update_layout(**theme)
     fig.update_xaxes(title_text='Mes')
-    fig.update_yaxes(title_text='Recuperación ($)', tickformat='$,.0f')
+    fig.update_yaxes(title_text='Honorarios ($)', tickformat='$,.0f')
 
     st.plotly_chart(fig, width='stretch')
 
@@ -653,30 +704,7 @@ def render_efectividad_valoracion(df):
         st.metric("Peor mes", peor_mes['mes_nombre'], f"{peor_mes['Eficiencia (%)']:.1f}%", delta_color="inverse")
 
     # ------------------------------------------------------------------
-    # 5. Tabla resumen
-    # ------------------------------------------------------------------
-    tabla_resumen = df_resumen[[
-        'mes_nombre',
-        'total_vehiculos',
-        'total_imprevistos',
-        'Eficiencia (%)'
-    ]].copy()
-    tabla_resumen = tabla_resumen.rename(columns={
-        'mes_nombre': 'Mes',
-        'total_vehiculos': 'Cantidad vehículos cotizados',
-        'total_imprevistos': 'Vehículos con imprevistos'
-    })
-    tabla_resumen['Eficiencia (%)'] = tabla_resumen['Eficiencia (%)'].map(lambda x: f"{x:.1f}%")
-
-    st.dataframe(
-        tabla_resumen,
-        width='stretch',
-        hide_index=True,
-        height=350
-    )
-
-    # ------------------------------------------------------------------
-    # 6. Gráfico de línea
+    # 5. Gráfico de línea
     # ------------------------------------------------------------------
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -710,6 +738,29 @@ def render_efectividad_valoracion(df):
     fig.update_yaxes(title_text='Eficiencia (%)', range=[0, 100], ticksuffix='%')
 
     st.plotly_chart(fig, width='stretch')
+
+    # ------------------------------------------------------------------
+    # 6. Tabla resumen
+    # ------------------------------------------------------------------
+    tabla_resumen = df_resumen[[
+        'mes_nombre',
+        'total_vehiculos',
+        'total_imprevistos',
+        'Eficiencia (%)'
+    ]].copy()
+    tabla_resumen = tabla_resumen.rename(columns={
+        'mes_nombre': 'Mes',
+        'total_vehiculos': 'Cantidad vehículos cotizados',
+        'total_imprevistos': 'Vehículos con imprevistos'
+    })
+    tabla_resumen['Eficiencia (%)'] = tabla_resumen['Eficiencia (%)'].map(lambda x: f"{x:.1f}%")
+
+    st.dataframe(
+        tabla_resumen,
+        width='stretch',
+        hide_index=True,
+        height=350
+    )
 
 
 # ============================================================================

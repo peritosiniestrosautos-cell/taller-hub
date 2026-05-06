@@ -20,7 +20,7 @@ from .theme import (
 def setup_page_config():
     """Configura la página de Streamlit con los colores corporativos"""
     st.set_page_config(
-        page_title="Taller Hub | Dashboard de Ahorros",
+        page_title="Dashboard de Ahorros | Talleres Automotrices",
         page_icon="🚗",
         layout="wide",
         initial_sidebar_state="expanded"

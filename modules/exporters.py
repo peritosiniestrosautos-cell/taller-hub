@@ -19,10 +19,10 @@ from reportlab.platypus import (
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.platypus.flowables import HRFlowable
-from .fee_config import load_fee_config, calculate_fees_for_df, format_currency
+from .fee_config import load_fee_config, calculate_fees_per_month, format_currency
 
 
-def generate_pdf_report(df, filtros_aplicados, include_honorarios=True):
+def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_nombre="Taller Hub"):
     """
     Generar reporte PDF del dashboard actual
     
@@ -204,9 +204,9 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True):
         
         if include_honorarios:
             fee_config = load_fee_config()
-            fee_info = calculate_fees_for_df(df, fee_config)
-            honorarios = fee_info['total']['fee_amount']
-            fee_percentage = fee_info['total']['fee_percentage'] * 100
+            fee_info = calculate_fees_per_month(df, fee_config)
+            honorarios = fee_info['total_honorarios']
+            fee_percentage = (honorarios / total_ahorro * 100) if total_ahorro > 0 else 0
             utilidad = total_ahorro - honorarios
         
         # Crear tabla de KPIs
@@ -284,7 +284,7 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True):
                 if include_honorarios and fee_info and taller_id in fee_info['by_taller']:
                     taller_fee = fee_info['by_taller'][taller_id]
                     row_data.append(
-                        Paragraph(format_currency(taller_fee['fee_amount']), body_style)
+                        Paragraph(format_currency(taller_fee['total_honorarios']), body_style)
                     )
                 
                 talleres_resumen.append(row_data)
@@ -442,7 +442,7 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True):
         fontName='Helvetica'
     )
     
-    elements.append(Paragraph("Taller Hub v2.0 | Desarrollado para RENOMOTRIZ", footer_style))
+    elements.append(Paragraph(f"{taller_nombre} v2.0 | Desarrollado para RENOMOTRIZ", footer_style))
     elements.append(Paragraph(
         f"Reporte generado el {datetime.now().strftime('%d/%m/%Y a las %H:%M')}", 
         footer_style
@@ -455,7 +455,7 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True):
     return buffer
 
 
-def generate_excel_report(df, filtros_aplicados):
+def generate_excel_report(df, filtros_aplicados, taller_nombre="Taller Hub"):
     """
     RF-004.1: Generar informe mensual automático en Excel
     Incluye múltiples hojas: Datos, Resumen, Gráficos
@@ -507,7 +507,7 @@ def generate_excel_report(df, filtros_aplicados):
                 str(filtros_aplicados),
                 len(df),
                 f"${df['DIFERENCIA'].sum():,.0f}" if 'DIFERENCIA' in df.columns else 'N/A',
-                'Taller Hub'
+                taller_nombre
             ]
         })
         metadata.to_excel(writer, sheet_name='Metadata', index=False)

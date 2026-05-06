@@ -257,7 +257,7 @@ def get_resumen_por_taller(df_consolidado) -> Optional:
         DataFrame con resumen por taller
     """
     import pandas as pd
-    from .fee_config import calculate_fees_for_df, load_fee_config
+    from .fee_config import calculate_fees_per_month, load_fee_config
     from .data_processor import filter_authorized_savings_records
 
     if df_consolidado is None or df_consolidado.empty:
@@ -278,16 +278,16 @@ def get_resumen_por_taller(df_consolidado) -> Optional:
     # Aplanar columnas multi-index
     resumen.columns = ["TALLER", "AHORRO_TOTAL", "AHORRO_PROMEDIO", "TOTAL_REPARACIONES", "VEHICULOS_UNICOS"]
 
-    # Calcular honorarios con regla de umbral por taller
+    # Calcular honorarios por mes (regla de umbral evaluada mes a mes, no acumulado)
     fee_config = load_fee_config()
-    fee_info = calculate_fees_for_df(df_consolidado, fee_config)
+    fee_info = calculate_fees_per_month(df_consolidado, fee_config)
     
-    # Update resumen with per-taller fees
+    # Update resumen with per-taller fees (sum of per-month calculations)
     for idx, row in resumen.iterrows():
         taller = row["TALLER"]
         if taller in fee_info['by_taller']:
-            resumen.loc[idx, "HONORARIOS"] = fee_info['by_taller'][taller]['fee_amount']
-            resumen.loc[idx, "UTILIDAD"] = row["AHORRO_TOTAL"] - fee_info['by_taller'][taller]['fee_amount']
+            resumen.loc[idx, "HONORARIOS"] = fee_info['by_taller'][taller]['total_honorarios']
+            resumen.loc[idx, "UTILIDAD"] = row["AHORRO_TOTAL"] - fee_info['by_taller'][taller]['total_honorarios']
         else:
             # Fallback to default
             resumen.loc[idx, "HONORARIOS"] = row["AHORRO_TOTAL"] * fee_config['global_defaults']['base_percentage']

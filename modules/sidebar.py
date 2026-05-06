@@ -43,7 +43,7 @@ def render_sidebar():
     
     st.sidebar.markdown(f"""
     <div style="text-align: center; margin-bottom: 2rem;">
-        <h2 style="color: {BrandColors.PRIMARY}; margin-bottom: 0.5rem;">🚗 TALLER HUB</h2>
+        <h2 style="color: {BrandColors.PRIMARY}; margin-bottom: 0.5rem;">🚗 TALLERES</h2>
         <p style="color: {GrayScale.SLATE_500}; font-size: 0.9rem;">Sistema de Gestión de Ahorros</p>
         <p style="color: {BrandColors.ACCENT}; font-size: 0.75rem;">🏪 Modo Multitaller</p>
     </div>

@@ -26,7 +26,6 @@ from modules.validators import run_validations
 # Importar visualizaciones
 from modules.visualizations import (
     render_kpis,
-    render_grafico_ahorro_mes,
     render_grafico_causales,
     render_tabla_detalle,
     render_recuperacion_mensual,
@@ -89,13 +88,13 @@ apply_custom_css()
 def main():
     """Función principal del dashboard - Versión Multitaller"""
     
-    # Header
-    render_header()
-    
     # =========================================================================
     # SIDEBAR - Selección de talleres y configuración
     # =========================================================================
     talleres_seleccionados, auto_refresh = render_sidebar()
+    
+    # Header (con nombre del taller activo)
+    render_header(talleres_seleccionados)
     
     # Verificar si hay talleres configurados
     if not talleres_seleccionados:
@@ -117,7 +116,7 @@ def main():
             **Nota:** Cada taller debe tener su propio Google Sheet con la misma estructura de columnas.
             """)
         
-        render_footer()
+        render_footer(talleres_seleccionados)
         return
     
     # =========================================================================
@@ -168,7 +167,7 @@ def main():
             Para debug, puedes usar el modo manual en "Configuración Avanzada" en el sidebar.
             """)
         
-        render_footer()
+        render_footer(talleres_seleccionados)
         return
     
     # Si se cargaron datos parcialmente (algunos talleres fallaron)
@@ -236,28 +235,27 @@ def main():
     # =========================================================================
     # SECCIÓN: COMPARATIVO ANUAL (Año vs Año)
     # =========================================================================
-    # Solo mostrar si hay datos de más de 1 año en el DataFrame filtrado
-    df_ahorro_autorizado = filter_authorized_savings_records(df_filtered)
+    # Usar datos sin filtros temporales (año/trimestre/mes) del sidebar global
+    # para que los filtros independientes del comparativo tengan control total
+    filtros_comp = filtros.copy()
+    filtros_comp['año'] = "Todos"
+    filtros_comp['trimestre'] = "Todos"
+    filtros_comp['mes'] = "Todos"
+    df_comp = aplicar_filtros(df, filtros_comp)
+
+    df_ahorro_autorizado = filter_authorized_savings_records(df_comp)
     if df_ahorro_autorizado is not None and not df_ahorro_autorizado.empty and 'AÑO' in df_ahorro_autorizado.columns:
         años_unicos = df_ahorro_autorizado['AÑO'].dropna().unique()
-        if len(años_unicos) > 1:
+        if len(años_unicos) >= 1:
             st.subheader("📅 Comparativo Anual")
-            render_comparativo_anual(df_filtered)
+            render_comparativo_anual(df_comp)
 
             st.divider()
 
     # =========================================================================
     # SECCIÓN: GRÁFICOS
     # =========================================================================
-    
-    # Primera fila de gráficos
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        render_grafico_ahorro_mes(df_filtered)
-    
-    with col2:
-        render_grafico_causales(df_filtered)
+    render_grafico_causales(df_filtered)
     
     # =========================================================================
     # SECCIÓN: DISTRIBUCIÓN DE AHORROS POR COMPAÑÍA DE SEGUROS
@@ -306,12 +304,12 @@ def main():
     # =========================================================================
     # SECCIÓN: EXPORTACIÓN
     # =========================================================================
-    render_export_section(df_filtered, filtros)
+    render_export_section(df_filtered, filtros, talleres_seleccionados)
     
     # =========================================================================
     # FOOTER
     # =========================================================================
-    render_footer()
+    render_footer(talleres_seleccionados)
 
 
 if __name__ == "__main__":

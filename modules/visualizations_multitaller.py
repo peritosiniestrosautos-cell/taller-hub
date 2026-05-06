@@ -14,7 +14,7 @@ from plotly.subplots import make_subplots
 
 from .config import PORCENTAJE_HONORARIOS
 from .taller_config import get_taller_config, get_talleres_disponibles
-from .fee_config import calculate_fee, load_fee_config, calculate_fees_for_df
+from .fee_config import load_fee_config, calculate_fees_per_month
 from .data_processor import filter_authorized_savings_records
 from .theme import (
     BrandColors, SemanticColors, GrayScale, ChartHeights, TALLER_COLORS,
@@ -50,7 +50,12 @@ def render_kpis_multitaller(df):
     if df is None or df.empty:
         st.info("No hay registros AUTORIZADO para comparar ahorro entre talleres.")
         return
-    
+
+    # RF-005.3: Deduplicar por PLACA + SINIESTRO — misma placa con mismo
+    # siniestro solo cuenta una vez. Placas con siniestros distintos sí cuentan.
+    if 'PLACA' in df.columns and 'SINIESTRO' in df.columns:
+        df = df.drop_duplicates(subset=['PLACA', 'SINIESTRO'], keep='first')
+
     talleres = df["TALLER_ORIGEN"].unique()
     
     if len(talleres) <= 1:
@@ -67,16 +72,16 @@ def render_kpis_multitaller(df):
 
     resumen.columns = ["TALLER", "AHORRO_TOTAL", "AHORRO_PROMEDIO", "TOTAL_REPARACIONES", "VEHICULOS_UNICOS"]
     
-    # Apply per-taller fee calculation
+    # Apply per-taller per-month fee calculation
     fee_config = load_fee_config()
-    fee_info = calculate_fees_for_df(df, fee_config)
+    fee_info = calculate_fees_per_month(df, fee_config)
     
-    # Update resumen with per-taller fees
+    # Update resumen with per-taller fees (sum of per-month)
     for idx, row in resumen.iterrows():
         taller = row["TALLER"]
         if taller in fee_info['by_taller']:
-            resumen.loc[idx, "HONORARIOS"] = fee_info['by_taller'][taller]['fee_amount']
-            resumen.loc[idx, "UTILIDAD"] = row["AHORRO_TOTAL"] - fee_info['by_taller'][taller]['fee_amount']
+            resumen.loc[idx, "HONORARIOS"] = fee_info['by_taller'][taller]['total_honorarios']
+            resumen.loc[idx, "UTILIDAD"] = row["AHORRO_TOTAL"] - fee_info['by_taller'][taller]['total_honorarios']
         else:
             # Fallback to default calculation
             resumen.loc[idx, "HONORARIOS"] = row["AHORRO_TOTAL"] * fee_config['global_defaults']['base_percentage']
@@ -179,7 +184,7 @@ def render_comparativo_anual(df):
     """
     Gráfico comparativo año vs año: muestra ahorro mensual agrupado por año.
     Una línea/barra por año. Eje X: meses (1-12), Eje Y: ahorro (DIFERENCIA).
-    Soporta filtro de trimestre y tanto modo single-taller como multitaller.
+    Incluye filtros independientes: años (multiselect), trimestre y mes.
     """
     if df is None or df.empty:
         return
@@ -192,19 +197,73 @@ def render_comparativo_anual(df):
         st.info("No hay registros AUTORIZADO para construir el comparativo anual.")
         return
 
+    # --- Filtros independientes del comparativo anual ---
+    col1, col2, col3 = st.columns(3)
+
+    años_en_datos = sorted(df['AÑO'].dropna().unique(), reverse=True)
+    años_en_datos = [int(a) for a in años_en_datos if a > 2000]
+
+    with col1:
+        años_seleccionados = st.multiselect(
+            "📅 Años a comparar",
+            options=años_en_datos,
+            default=años_en_datos,
+            help="Selecciona los años que deseas comparar",
+            key="comp_anual_años"
+        )
+
+    with col2:
+        trimestre = st.selectbox(
+            "📊 Trimestre",
+            options=["Todos", "Q1", "Q2", "Q3", "Q4"],
+            help="Q1: Ene-Mar | Q2: Abr-Jun | Q3: Jul-Sep | Q4: Oct-Dic",
+            key="comp_anual_trimestre"
+        )
+
+    meses_nombres = {
+        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
+        5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
+        9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
+    }
+
+    with col3:
+        meses_en_datos = sorted(df['MES'].dropna().unique())
+        meses_en_datos = [m for m in meses_en_datos if 1 <= m <= 12]
+        meses_opciones = ["Todos"] + [meses_nombres[m] for m in meses_en_datos]
+        mes_seleccionado = st.selectbox(
+            "📆 Mes",
+            options=meses_opciones,
+            help="Filtra por un mes específico",
+            key="comp_anual_mes"
+        )
+
+    # Aplicar filtros independientes
+    df_filtrado = df.copy()
+
+    if años_seleccionados:
+        df_filtrado = df_filtrado[df_filtrado['AÑO'].isin(años_seleccionados)]
+
+    trimestre_map = {"Q1": (1, 3), "Q2": (4, 6), "Q3": (7, 9), "Q4": (10, 12)}
+    if trimestre != "Todos":
+        inicio, fin = trimestre_map[trimestre]
+        df_filtrado = df_filtrado[(df_filtrado['MES'] >= inicio) & (df_filtrado['MES'] <= fin)]
+
+    if mes_seleccionado != "Todos":
+        mes_num = [k for k, v in meses_nombres.items() if v == mes_seleccionado][0]
+        df_filtrado = df_filtrado[df_filtrado['MES'] == mes_num]
+
     # Filtrar datos válidos
-    df_valid = df[
-        (df['AÑO'].notna()) & (df['MES'].notna()) &
-        (df['AÑO'] > 2000) & (df['MES'] >= 1) & (df['MES'] <= 12)
+    df_valid = df_filtrado[
+        (df_filtrado['AÑO'].notna()) & (df_filtrado['MES'].notna()) &
+        (df_filtrado['AÑO'] > 2000) & (df_filtrado['MES'] >= 1) & (df_filtrado['MES'] <= 12)
     ]
 
     if df_valid.empty:
+        st.info("No hay datos para los filtros seleccionados del comparativo anual.")
         return
 
-    # Verificar que haya más de 1 año en los datos
+    # Años únicos en los datos (puede ser 1 o más)
     años_unicos = sorted(df_valid['AÑO'].unique())
-    if len(años_unicos) <= 1:
-        return
 
     # Agrupar por año y mes
     df_grupo = df_valid.groupby(["AÑO", "MES"]).agg({
@@ -508,19 +567,19 @@ def render_tabla_resumen_talleres(df):
     resumen.columns = ["TALLER", "AHORRO_TOTAL", "AHORRO_PROMEDIO", "REPARACIONES",
                        "VEHICULOS", "MO_INICIAL", "MO_FINAL"]
 
-    # Calcular derivados con regla de umbral por taller
+    # Calcular derivados con regla de umbral por taller (mes a mes)
     fee_config = load_fee_config()
     hide_fees = fee_config.get('hide_fees_presentation', False)
     
-    # Use per-taller fee calculations
-    fee_info = calculate_fees_for_df(df, fee_config)
+    # Use per-taller per-month fee calculations
+    fee_info = calculate_fees_per_month(df, fee_config)
     
-    # Update resumen with per-taller fees
+    # Update resumen with per-taller fees (sum of per-month)
     for idx, row in resumen.iterrows():
         taller = row["TALLER"]
         if taller in fee_info['by_taller']:
-            resumen.loc[idx, "HONORARIOS"] = fee_info['by_taller'][taller]['fee_amount']
-            resumen.loc[idx, "UTILIDAD"] = row["AHORRO_TOTAL"] - fee_info['by_taller'][taller]['fee_amount']
+            resumen.loc[idx, "HONORARIOS"] = fee_info['by_taller'][taller]['total_honorarios']
+            resumen.loc[idx, "UTILIDAD"] = row["AHORRO_TOTAL"] - fee_info['by_taller'][taller]['total_honorarios']
         else:
             # Fallback
             resumen.loc[idx, "HONORARIOS"] = row["AHORRO_TOTAL"] * fee_config['global_defaults']['base_percentage']
