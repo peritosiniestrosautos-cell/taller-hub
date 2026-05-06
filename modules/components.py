@@ -10,6 +10,7 @@ import pandas as pd
 from datetime import datetime
 from typing import List
 from .data_processor import filter_authorized_savings_records
+from .date_utils import parse_source_date_column
 from .theme import GrayScale
 from .taller_config import get_nombre_taller
 
@@ -234,8 +235,8 @@ def render_savings_debug_panel(df):
             st.info("No hay registros AUTORIZADO con ahorro distinto de cero.")
             return
 
-        df_debug['FECHA_AUTO_DT'] = pd.to_datetime(df_debug.get('FECHA_AUTO'), errors='coerce', dayfirst=True)
-        df_debug['FECHA_INGR_DT'] = pd.to_datetime(df_debug.get('FECHA_INGR'), errors='coerce', dayfirst=True)
+        df_debug['FECHA_AUTO_DT'] = parse_source_date_column(df_debug.get('FECHA_AUTO'), 'FECHA_AUTO')
+        df_debug['FECHA_INGR_DT'] = parse_source_date_column(df_debug.get('FECHA_INGR'), 'FECHA_INGR')
         df_debug['AUTO_AÑO'] = df_debug['FECHA_AUTO_DT'].dt.year
         df_debug['AUTO_MES'] = df_debug['FECHA_AUTO_DT'].dt.month
         df_debug['INGR_AÑO'] = df_debug['FECHA_INGR_DT'].dt.year

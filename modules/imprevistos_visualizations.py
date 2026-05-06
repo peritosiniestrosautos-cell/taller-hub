@@ -29,6 +29,7 @@ from .imprevistos_processor import (
     calcular_estadisticas_por_causal,
     resumir_imprevistos_mensuales,
 )
+from .date_utils import parse_source_date_column
 from .theme import (
     BrandColors, SemanticColors, GrayScale, ChartHeights,
     get_plotly_theme, get_chart_color, hex_with_opacity
@@ -747,15 +748,9 @@ def render_demora_definicion_imprevisto(df=None, año: int = None):
     total_registros = len(df_w)
     invalidados = {}
 
-    # DIAGNÓSTICO: estado inicial de las columnas de fecha
-    diag_ingr_tipo = str(df_w['FECHA_INGR'].dtype)
-    diag_auto_tipo = str(df_w['FECHA_AUTO'].dtype)
-    diag_ingr_muestra = df_w['FECHA_INGR'].dropna().head(5).tolist()
-    diag_auto_muestra = df_w['FECHA_AUTO'].dropna().head(5).tolist()
-
     # 1. Forzar conversión a datetime SIEMPRE (no solo si no es datetime64)
-    for col in ['FECHA_INGR', 'FECHA_AUTO']:
-        df_w[col] = pd.to_datetime(df_w[col], errors='coerce', dayfirst=True)
+    df_w['FECHA_INGR'] = parse_source_date_column(df_w['FECHA_INGR'], 'FECHA_INGR')
+    df_w['FECHA_AUTO'] = parse_source_date_column(df_w['FECHA_AUTO'], 'FECHA_AUTO')
 
     # 2. Registrar y descartar registros con FECHA_INGR inválida (NaT)
     mask_ingr_na = df_w['FECHA_INGR'].isna()
@@ -817,20 +812,6 @@ def render_demora_definicion_imprevisto(df=None, año: int = None):
             with cols_diag[col_idx % len(cols_diag)]:
                 st.metric(motivo, cant)
             col_idx += 1
-
-    # Datos crudos de diagnóstico de fechas
-    with st.expander("🔧 Diagnóstico avanzado de fechas", expanded=False):
-        st.caption(f"**Tipo FECHA_INGR:** `{diag_ingr_tipo}`")
-        st.caption(f"**Muestra FECHA_INGR (primeros 5):** {diag_ingr_muestra}")
-        st.caption(f"**Tipo FECHA_AUTO:** `{diag_auto_tipo}`")
-        st.caption(f"**Muestra FECHA_AUTO (primeros 5):** {diag_auto_muestra}")
-        st.caption(f"**Año seleccionado:** {año_sel}")
-
-        # Mostrar también cuántos registros originales tenían FECHA_INGR vs cuántos sobrevivieron
-        st.caption(f"**Registros con FECHA_INGR presente (antes de filtrar año):** "
-                   f"{total_registros - invalidados.get('FECHA_INGR vacía o inválida', 0)}")
-        st.caption(f"**Registros con FECHA_AUTO presente (antes de filtrar año):** "
-                   f"{total_registros - invalidados.get('FECHA_AUTO vacía o inválida', 0)}")
 
     # --- Agrupar por CIA y ESTATUS ---
     df_agrupado = df_w.groupby(['COMPAÑIA_DE_SEGUROS', 'ESTATUS']).agg(

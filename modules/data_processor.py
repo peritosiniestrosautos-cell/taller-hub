@@ -9,6 +9,7 @@ RF-002: Limpieza y transformación de datos
 import pandas as pd
 from datetime import datetime
 from .config import COLUMN_MAPPING
+from .date_utils import parse_source_date_column
 
 
 # Variable global para logs de debug
@@ -132,7 +133,7 @@ def procesar_dataframe(df, fuente="Google Sheets"):
     date_cols = ['FECHA_INGR', 'FECHA_AUTO']
     for col in date_cols:
         if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors='coerce', dayfirst=True)
+            df[col] = parse_source_date_column(df[col], col)
             add_log(f"Columna auxiliar de fecha procesada: {col}")
 
     # Componentes de fecha: usar DIA/MES/AÑO como fuente primaria.
