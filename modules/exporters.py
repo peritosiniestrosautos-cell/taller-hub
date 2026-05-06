@@ -21,6 +21,13 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.platypus.flowables import HRFlowable
 from .fee_config import load_fee_config, calculate_fees_per_month, format_currency
 
+PDF_KPI_FONT_SIZE = 10
+
+
+def _format_honorarios_kpi_value(honorarios, fee_percentage=None):
+    """Return the honorarios KPI text shown in the PDF summary."""
+    return format_currency(honorarios)
+
 
 def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_nombre="Taller Hub"):
     """
@@ -110,7 +117,7 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
     kpi_style = ParagraphStyle(
         'KPI',
         parent=styles['Normal'],
-        fontSize=14,
+        fontSize=PDF_KPI_FONT_SIZE,
         textColor=colors.HexColor('#1E40AF'),
         fontName='Helvetica-Bold'
     )
@@ -232,7 +239,7 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
                 Paragraph("<b>✅ Utilidad Neta</b>", kpi_label_style),
             ])
             kpi_values[0].extend([
-                Paragraph(f"{format_currency(honorarios)} ({fee_percentage:.1f}%)", kpi_style),
+                Paragraph(_format_honorarios_kpi_value(honorarios, fee_percentage), kpi_style),
                 Paragraph(format_currency(utilidad), kpi_style),
             ])
         
