@@ -26,6 +26,28 @@ from .theme import (
 # KPIs PRINCIPALES
 # ============================================================================
 
+def format_period_label(mes, anio):
+    """Formatea MM/YYYY tolerando valores numéricos float de pandas."""
+    return f"{int(mes):02d}/{int(anio)}"
+
+
+def calculate_accumulated_savings_kpi(df):
+    """
+    Calcula el KPI de ahorro acumulado usando todos los registros disponibles
+    en DIFERENCIA/RECUPERADO, sin filtrar por estatus ni deduplicar.
+    """
+    if df is None or df.empty or 'DIFERENCIA' not in df.columns:
+        return {
+            'total_ahorro': 0,
+            'reparaciones_con_ahorro': 0,
+        }
+
+    diferencia = pd.to_numeric(df['DIFERENCIA'], errors='coerce').fillna(0)
+    return {
+        'total_ahorro': diferencia.sum(),
+        'reparaciones_con_ahorro': int((diferencia > 0).sum()),
+    }
+
 def render_kpis(df):
     """
     RF-003.1: KPIs principales
@@ -40,34 +62,41 @@ def render_kpis(df):
         st.warning("No se encontró columna de DIFERENCIA/AHORRO")
         return
 
-    df = filter_authorized_savings_records(df)
-    if df is None or df.empty:
-        st.info("No hay registros AUTORIZADO para calcular métricas de ahorro.")
-        return
+    ahorro_kpi = calculate_accumulated_savings_kpi(df)
+    total_ahorro = ahorro_kpi['total_ahorro']
+    reparaciones_con_ahorro = ahorro_kpi['reparaciones_con_ahorro']
+
+    df_honorarios = filter_authorized_savings_records(df)
+    if df_honorarios is None:
+        df_honorarios = pd.DataFrame(columns=df.columns)
+
+    df_metricas = df_honorarios.copy()
 
     # RF-005.3: Deduplicar por PLACA + SINIESTRO — misma placa con mismo
     # siniestro solo cuenta una vez. Placas con siniestros distintos sí cuentan.
-    if 'PLACA' in df.columns and 'SINIESTRO' in df.columns:
-        df = df.drop_duplicates(subset=['PLACA', 'SINIESTRO'], keep='first')
+    if 'PLACA' in df_metricas.columns and 'SINIESTRO' in df_metricas.columns:
+        df_metricas = df_metricas.drop_duplicates(subset=['PLACA', 'SINIESTRO'], keep='first')
 
-    total_ahorro = df['DIFERENCIA'].sum()
-    total_registros = len(df)
-    reparaciones_con_ahorro = len(df[df['DIFERENCIA'] > 0])
-    promedio_ahorro = df[df['DIFERENCIA'] > 0]['DIFERENCIA'].mean() if reparaciones_con_ahorro > 0 else 0
+    total_ahorro_metricas = df_metricas['DIFERENCIA'].sum() if not df_metricas.empty else 0
+    reparaciones_metricas = len(df_metricas[df_metricas['DIFERENCIA'] > 0]) if not df_metricas.empty else 0
+    promedio_ahorro = (
+        df_metricas[df_metricas['DIFERENCIA'] > 0]['DIFERENCIA'].mean()
+        if reparaciones_metricas > 0 else 0
+    )
 
     # Cálculo de honorarios por mes (regla de umbral por taller, evaluada mes a mes)
     fee_config = load_fee_config()
-    fee_info = calculate_fees_per_month(df, fee_config)
+    fee_info = calculate_fees_per_month(df_honorarios, fee_config)
     
     # Total honorarios = sum of per-month (and per-taller) fees
     honorarios = fee_info['total_honorarios']
-    utilidad = total_ahorro - honorarios
+    utilidad = total_ahorro_metricas - honorarios
     
     # Check presentation mode
     hide_fees = fee_config.get('hide_fees_presentation', False)
     
     # Determine if multitaller
-    es_multitaller = 'TALLER_ORIGEN' in df.columns and df['TALLER_ORIGEN'].nunique() > 1
+    es_multitaller = 'TALLER_ORIGEN' in df_metricas.columns and df_metricas['TALLER_ORIGEN'].nunique() > 1
 
     col1, col2 = st.columns(2, gap="medium")
 
@@ -91,7 +120,7 @@ def render_kpis(df):
             """, unsafe_allow_html=True)
         else:
             # Calculate effective rate for display
-            effective_rate = (honorarios / total_ahorro * 100) if total_ahorro > 0 else 0
+            effective_rate = (honorarios / total_ahorro_metricas * 100) if total_ahorro_metricas > 0 else 0
             
             if es_multitaller and fee_info['by_taller']:
                 st.markdown(f"""
@@ -508,11 +537,15 @@ def render_recuperacion_mensual(df):
         resumen_display[col] = resumen_display[col].apply(lambda x: f"${x:,.0f}")
     resumen_display['%_HONORARIOS'] = resumen_display['%_HONORARIOS'].apply(lambda x: f"{x:.1f}%")
 
-    resumen_display['PERIODO'] = resumen_display.apply(lambda x: f"{x['MES']:02d}/{x['AÑO']}", axis=1)
+    resumen_display['PERIODO'] = resumen_display.apply(
+        lambda x: format_period_label(x['MES'], x['AÑO']), axis=1
+    )
 
     # Build period labels for chart
     resumen = resumen.copy()
-    resumen['PERIODO'] = resumen['MES'].astype(int).astype(str).str.zfill(2) + '/' + resumen['AÑO'].astype(int).astype(str)
+    resumen['PERIODO'] = resumen.apply(
+        lambda x: format_period_label(x['MES'], x['AÑO']), axis=1
+    )
 
     # Render chart: VALOR_HONORARIOS as primary metric, RECUPERACION as reference
     chart_type = get_chart_type_for_id('recuperacion_mensual')

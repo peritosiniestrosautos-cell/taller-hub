@@ -66,6 +66,35 @@ def filter_authorized_savings_records(df):
     return df[estatus_normalizado == "AUTORIZADO"].copy()
 
 
+def drop_non_data_rows(df):
+    """
+    Elimina filas vacías o filas-resumen sin identidad de reparación.
+    Caso observado en Google Sheets: una fila final con solo RECUPERADO total.
+    """
+    if df is None or df.empty:
+        return df
+
+    text_identity_cols = [
+        col for col in ['PLACA', 'SINIESTRO', 'IMPREVISTO', 'ACCION', 'CAUSAL', 'ESTATUS']
+        if col in df.columns
+    ]
+    numeric_identity_cols = [col for col in ['DIA', 'MES', 'AÑO'] if col in df.columns]
+
+    if not text_identity_cols and not numeric_identity_cols:
+        return df
+
+    text_has_data = pd.Series(False, index=df.index)
+    for col in text_identity_cols:
+        text_has_data = text_has_data | df[col].fillna('').astype(str).str.strip().ne('')
+
+    numeric_has_data = pd.Series(False, index=df.index)
+    for col in numeric_identity_cols:
+        numeric_has_data = numeric_has_data | df[col].notna()
+
+    valid_rows = text_has_data | numeric_has_data
+    return df[valid_rows].copy()
+
+
 def procesar_dataframe(df, fuente="Google Sheets"):
     """
     Procesa y limpia el DataFrame con las transformaciones necesarias
@@ -177,6 +206,12 @@ def procesar_dataframe(df, fuente="Google Sheets"):
     if 'ESTATUS' in df.columns:
         df['ESTATUS'] = df['ESTATUS'].apply(normalize_estatus_value)
         add_log("ESTATUS normalizado a valores canónicos")
+
+    original_len = len(df)
+    df = drop_non_data_rows(df)
+    removed_rows = original_len - len(df)
+    if removed_rows:
+        add_log(f"Filas vacías/resumen descartadas: {removed_rows}")
     
     add_log(f"Procesamiento completado. Filas: {len(df)}, Columnas: {len(df.columns)}")
     return df

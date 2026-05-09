@@ -46,10 +46,12 @@ def render_kpis_multitaller(df):
         # Fallback: usar KPIs normales
         return
 
-    df = filter_authorized_savings_records(df)
-    if df is None or df.empty:
+    df_honorarios = filter_authorized_savings_records(df)
+    if df_honorarios is None or df_honorarios.empty:
         st.info("No hay registros AUTORIZADO para comparar ahorro entre talleres.")
         return
+
+    df = df_honorarios.copy()
 
     # RF-005.3: Deduplicar por PLACA + SINIESTRO — misma placa con mismo
     # siniestro solo cuenta una vez. Placas con siniestros distintos sí cuentan.
@@ -74,7 +76,7 @@ def render_kpis_multitaller(df):
     
     # Apply per-taller per-month fee calculation
     fee_config = load_fee_config()
-    fee_info = calculate_fees_per_month(df, fee_config)
+    fee_info = calculate_fees_per_month(df_honorarios, fee_config)
     
     # Update resumen with per-taller fees (sum of per-month)
     for idx, row in resumen.iterrows():

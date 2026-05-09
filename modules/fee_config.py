@@ -34,6 +34,15 @@ DEFAULT_FEE_CONFIG = {
 }
 
 
+def prepare_fee_calculation_df(df):
+    """
+    Aplica las reglas base para honorarios:
+    - solo registros AUTORIZADO
+    """
+    df = filter_authorized_savings_records(df)
+    return df
+
+
 def load_fee_config():
     """Load fee configuration from JSON file"""
     if FEE_CONFIG_FILE.exists():
@@ -178,7 +187,7 @@ def calculate_fees_for_df(df, config=None):
     if config is None:
         config = load_fee_config()
 
-    df = filter_authorized_savings_records(df)
+    df = prepare_fee_calculation_df(df)
     
     result = {
         'total': None,
@@ -224,7 +233,7 @@ def calculate_fees_per_month(df, config=None):
     if config is None:
         config = load_fee_config()
     
-    df = filter_authorized_savings_records(df)
+    df = prepare_fee_calculation_df(df)
     
     result = {
         'total_honorarios': 0.0,
