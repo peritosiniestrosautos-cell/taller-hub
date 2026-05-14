@@ -3,7 +3,7 @@ import pandas as pd
 
 SOURCE_DATE_FORMATS = {
     "FECHA_INGR": "%d/%m/%Y",
-    "FECHA_AUTO": "%m/%d/%Y",
+    "FECHA_AUTO": "%d/%m/%Y",
 }
 
 
@@ -12,7 +12,7 @@ def parse_source_date_column(series: pd.Series, column_name: str) -> pd.Series:
     Parse source date columns using the known input format for each field.
 
     FECHA_INGR arrives as dd/mm/yyyy.
-    FECHA_AUTO arrives as mm/dd/yyyy.
+    FECHA_AUTO arrives as dd/mm/yyyy.
 
     Falls back to pandas inference for values that do not match the strict
     source format, preserving compatibility with already-normalized datetimes.
@@ -38,7 +38,7 @@ def parse_source_date_column(series: pd.Series, column_name: str) -> pd.Series:
         fallback = pd.to_datetime(
             cleaned[missing_mask],
             errors="coerce",
-            dayfirst=(column_name == "FECHA_INGR"),
+            dayfirst=True,
         )
         parsed.loc[missing_mask] = fallback
 

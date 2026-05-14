@@ -643,7 +643,7 @@ def render_grafico_culpa_taller_mensual(df=None):
         textposition='top center',
         textfont=dict(size=12, color=BrandColors.PRIMARY),
         hovertemplate='%{x}: %{y} imprevistos<extra></extra>',
-        name='Culpa del Taller'
+        name='Con causal de proceso'
     ))
 
     fig.update_layout(
@@ -664,10 +664,10 @@ def render_grafico_culpa_taller_mensual(df=None):
     with col1:
         st.metric("Total registros cambio", int(resumen['total'].sum()))
     with col2:
-        st.metric("Culpa del taller", int(resumen['culpa_taller'].sum()))
+        st.metric("Con causal de proceso", int(resumen['culpa_taller'].sum()))
     with col3:
         tasa = (resumen['culpa_taller'].sum() / resumen['total'].sum() * 100) if resumen['total'].sum() > 0 else 0
-        st.metric("Tasa culpa del taller", f"{tasa:.1f}%")
+        st.metric("Tasa con causal", f"{tasa:.1f}%")
 
 
 # ============================================================================
@@ -684,7 +684,7 @@ def render_demora_definicion_imprevisto(df=None, año: int = None):
     Reglas:
     - Deduplicación por PLACA + SINIESTRO (solo se admite 1 registro por combinación)
     - Todos los registros con fechas válidas son considerados
-    - Delay = abs(FECHA_AUTO - FECHA_INGR) en días
+    - Delay = FECHA_AUTO - FECHA_INGR en días
     """
     import datetime
 
@@ -778,8 +778,8 @@ def render_demora_definicion_imprevisto(df=None, año: int = None):
             st.caption("Registros descartados:\n" + "\n".join(detalles))
         return
 
-    # --- Calcular demora en días (valor absoluto) ---
-    df_w['_DEMORA_DIAS'] = abs((df_w['FECHA_AUTO'] - df_w['FECHA_INGR']).dt.days)
+    # --- Calcular demora en días ---
+    df_w['_DEMORA_DIAS'] = (df_w['FECHA_AUTO'] - df_w['FECHA_INGR']).dt.days
 
     # --- Filtrar estatus AUTORIZADO y RECHAZADO únicamente ---
     mask_estatus_invalido = ~df_w['ESTATUS'].isin(['AUTORIZADO', 'RECHAZADO'])
