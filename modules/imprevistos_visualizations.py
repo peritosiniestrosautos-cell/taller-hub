@@ -29,11 +29,48 @@ from .imprevistos_processor import (
     calcular_estadisticas_por_causal,
     resumir_imprevistos_mensuales,
 )
+from .data_loader import load_tasa_imprevistos_from_excel
 from .date_utils import parse_source_date_column
 from .theme import (
     BrandColors, SemanticColors, GrayScale, ChartHeights,
     get_plotly_theme, get_chart_color, hex_with_opacity
 )
+
+
+# ============================================================================
+# HELPER: Cargar datos de vehículos desde TASA DE IMPREVISTOS
+# ============================================================================
+
+def _get_vehiculos_por_mes(año: int = None) -> pd.DataFrame:
+    """
+    Obtiene el total de vehículos entregados por mes desde la hoja
+    'TASA DE IMPREVISTOS'. Primero busca en session_state; si no está,
+    carga directamente desde el archivo Excel local.
+    
+    Returns:
+        DataFrame con columnas: año, mes, total_vehiculos
+    """
+    df_tasa_sheets = st.session_state.get("tasa_imprevistos_data")
+    
+    if df_tasa_sheets is None or df_tasa_sheets.empty:
+        df_tasa_sheets, error = load_tasa_imprevistos_from_excel()
+        if df_tasa_sheets is not None and not df_tasa_sheets.empty:
+            st.session_state["tasa_imprevistos_data"] = df_tasa_sheets
+    
+    if df_tasa_sheets is None or df_tasa_sheets.empty:
+        return pd.DataFrame(columns=['año', 'mes', 'total_vehiculos'])
+    
+    df_tasa_filtered = df_tasa_sheets.copy()
+    if año:
+        df_tasa_filtered = df_tasa_filtered[df_tasa_filtered['AÑO'] == año]
+    
+    df_vehiculos = df_tasa_filtered.groupby(['AÑO', 'MES']).agg(
+        total_vehiculos=('TOTAL', 'sum')
+    ).reset_index()
+    df_vehiculos = df_vehiculos.rename(columns={'AÑO': 'año', 'MES': 'mes'})
+    df_vehiculos['año'] = pd.to_numeric(df_vehiculos['año'], errors='coerce').astype(int)
+    df_vehiculos['mes'] = pd.to_numeric(df_vehiculos['mes'], errors='coerce').astype(int)
+    return df_vehiculos
 
 
 # ============================================================================
@@ -65,36 +102,14 @@ def render_grafico_tasa_imprevistos_nuevo(
         st.caption("💡 Los imprevistos se detectan cuando ACCION='CAMBIO' o IMPREVISTO no está vacío")
         return
     
-    df_all = df.copy()
-    if 'AÑO' in df_all.columns and 'MES' in df_all.columns:
-        df_all['año'] = pd.to_numeric(df_all['AÑO'], errors='coerce')
-        df_all['mes'] = pd.to_numeric(df_all['MES'], errors='coerce')
-        
-        if año:
-            df_all = df_all[df_all['año'] == año]
-            df_imprevistos = df_imprevistos[df_imprevistos['año'] == año]
-        
+    if 'AÑO' in df.columns and 'MES' in df.columns:
         df_imp_mes = resumir_imprevistos_mensuales(df=df, año=año)
         
-        df_tasa_sheets = st.session_state.get("tasa_imprevistos_data")
-        if df_tasa_sheets is not None and not df_tasa_sheets.empty:
-            df_tasa_filtered = df_tasa_sheets.copy()
-            if año:
-                df_tasa_filtered = df_tasa_filtered[df_tasa_filtered['AÑO'] == año]
-            
-            df_vehiculos = df_tasa_filtered.groupby(['AÑO', 'MES']).agg(
-                total_vehiculos=('TOTAL', 'sum')
-            ).reset_index()
-            df_vehiculos = df_vehiculos.rename(columns={'AÑO': 'año', 'MES': 'mes'})
-            df_vehiculos['año'] = df_vehiculos['año'].astype(int)
-            df_vehiculos['mes'] = df_vehiculos['mes'].astype(int)
-        else:
-            st.warning("⚠️ No se encontraron datos de la hoja 'TASA DE IMPREVISTOS'. Usando conteo del DataFrame como fallback.")
-            df_vehiculos = df_all.groupby(['año', 'mes']).agg(
-                total_vehiculos=('PLACA', 'count')
-            ).reset_index()
-            df_vehiculos['año'] = df_vehiculos['año'].astype(int)
-            df_vehiculos['mes'] = df_vehiculos['mes'].astype(int)
+        df_vehiculos = _get_vehiculos_por_mes(año=año)
+        
+        if df_vehiculos.empty:
+            st.warning("⚠️ No se encontraron datos de la hoja 'TASA DE IMPREVISTOS'. No se puede calcular la tasa sin el total de vehículos.")
+            return
         
         df_resumen = df_vehiculos.merge(df_imp_mes, on=['año', 'mes'], how='outer')
         df_resumen['total_vehiculos'] = df_resumen['total_vehiculos'].fillna(0).astype(int)
@@ -169,6 +184,7 @@ def render_tabla_resumen_imprevistos(
     Render the detailed summary table:
     mes | cantidad vehículos | cantidad imprevistos | tasa (%)
     Plus fault classification breakdown.
+    Uses 'TASA DE IMPREVISTOS' sheet for vehicle counts.
     """
     
     st.subheader("📋 Tabla Resumen Mensual")
@@ -186,25 +202,20 @@ def render_tabla_resumen_imprevistos(
         return
     
     # Get monthly data
-    df_all = df.copy()
-    if 'AÑO' in df_all.columns and 'MES' in df_all.columns:
-        df_all['año'] = pd.to_numeric(df_all['AÑO'], errors='coerce')
-        df_all['mes'] = pd.to_numeric(df_all['MES'], errors='coerce')
-        
+    if 'AÑO' in df.columns and 'MES' in df.columns:
         if año:
-            df_all = df_all[df_all['año'] == año]
             df_imprevistos = df_imprevistos[df_imprevistos['año'] == año]
         
-        df_vehiculos = df_all.groupby(['año', 'mes']).agg(
-            total_vehiculos=('PLACA', 'count')
-        ).reset_index()
+        df_imp_mes = resumir_imprevistos_mensuales(df=df, año=año)
         
-        df_imp_mes = df_imprevistos.groupby(['año', 'mes']).agg(
-            total_imprevistos=('placa', 'count'),
-            culpa_taller=('es_culpa_taller', 'sum')
-        ).reset_index()
+        df_vehiculos = _get_vehiculos_por_mes(año=año)
         
-        df_resumen = df_vehiculos.merge(df_imp_mes, on=['año', 'mes'], how='left')
+        if df_vehiculos.empty:
+            st.warning("⚠️ No se encontraron datos de la hoja 'TASA DE IMPREVISTOS'. No se puede calcular la tasa sin el total de vehículos.")
+            return
+        
+        df_resumen = df_vehiculos.merge(df_imp_mes, on=['año', 'mes'], how='outer')
+        df_resumen['total_vehiculos'] = df_resumen['total_vehiculos'].fillna(0).astype(int)
         df_resumen['total_imprevistos'] = df_resumen['total_imprevistos'].fillna(0).astype(int)
         df_resumen['culpa_taller'] = df_resumen['culpa_taller'].fillna(0).astype(int)
         df_resumen['no_culpa_taller'] = df_resumen['total_imprevistos'] - df_resumen['culpa_taller']
@@ -262,6 +273,8 @@ def render_tabla_resumen_imprevistos(
         Tasa (%) = (Cantidad de Imprevistos / Cantidad de Vehículos) × 100
         ```
         
+        **Total de vehículos:** Se obtiene de la hoja **'TASA DE IMPREVISTOS'** del archivo Excel/Google Sheets.
+        
         **Reglas de clasificación:**
         
         - **Culpa del Taller:**
@@ -271,8 +284,8 @@ def render_tabla_resumen_imprevistos(
             - Predesarme
             - Sin fotos claras
             - Sin diagnóstico
-            - Error de diagnóstico
-            - Daño adicional
+            - Daño en proceso
+            - No es reparable
         
         - **NO es Culpa del Taller:**
           - Imprevistos con cambio de repuestos

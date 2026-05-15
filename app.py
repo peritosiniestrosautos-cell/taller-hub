@@ -38,6 +38,7 @@ from modules.imprevistos_visualizations import (
     render_grafico_tasa_imprevistos_nuevo,
     render_grafico_culpa_taller_mensual,
     render_demora_definicion_imprevisto,
+    render_tabla_resumen_imprevistos,
 )
 
 # Importar visualizaciones multitaller
@@ -292,6 +293,11 @@ def main():
 
     with col2:
         render_grafico_culpa_taller_mensual(df=df_filtered)
+
+    st.divider()
+
+    # Tabla resumen mensual de imprevistos
+    render_tabla_resumen_imprevistos(df=df_filtered, año=None)
 
     st.divider()
 

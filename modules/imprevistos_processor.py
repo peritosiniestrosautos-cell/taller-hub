@@ -56,19 +56,37 @@ def extraer_imprevistos_from_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     # Create a copy to avoid modifying original
     df_work = df.copy()
     
-    # Filter rows that have imprevistos:
-    # Option 1: ACCION contains "CAMBIO"
-    # Option 2: IMPREVISTO column is not empty
+    # Filter rows that have imprevistos.
+    # In some files, IMPREVISTO is a boolean indicator (empty = no imprevisto).
+    # In the current BASE DE DATOS, IMPREVISTO contains damage descriptions
+    # (e.g. "escaner", "costado rh") and ALL records have a value, meaning the
+    # sheet already contains only vehicles with imprevistos.
+    # We detect this automatically: if >=95% of rows have a descriptive value,
+    # we treat the whole sheet as already filtered.
     mask_imprevistos = pd.Series(False, index=df_work.index)
-    
-    if 'ACCION' in df_work.columns:
-        mask_imprevistos |= df_work['ACCION'].str.contains('CAMBIO', na=False, case=False)
-    
+    has_imprevisto = pd.Series(False, index=df_work.index)
+
     if 'IMPREVISTO' in df_work.columns:
-        mask_imprevistos |= (df_work['IMPREVISTO'].notna()) & (df_work['IMPREVISTO'] != '') & (df_work['IMPREVISTO'] != 'NAN')
-    
+        has_imprevisto = (
+            df_work['IMPREVISTO'].notna()
+            & (df_work['IMPREVISTO'].astype(str).str.strip() != '')
+            & (df_work['IMPREVISTO'].astype(str).str.upper().str.strip() != 'NAN')
+            & (df_work['IMPREVISTO'].astype(str).str.upper().str.strip() != 'NO')
+        )
+
+    imprevisto_rate = has_imprevisto.mean() if 'IMPREVISTO' in df_work.columns else 0.0
+
+    if imprevisto_rate >= 0.95:
+        # Sheet already filtered: assume every row is an imprevisto record
+        mask_imprevistos = pd.Series(True, index=df_work.index)
+    else:
+        # IMPREVISTO acts as a boolean indicator
+        mask_imprevistos = has_imprevisto.copy()
+        if 'ACCION' in df_work.columns:
+            mask_imprevistos |= df_work['ACCION'].str.contains('CAMBIO', na=False, case=False)
+
     df_imprevistos = df_work[mask_imprevistos].copy()
-    
+
     if df_imprevistos.empty:
         return pd.DataFrame()
     
@@ -129,9 +147,10 @@ def extraer_imprevistos_from_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 def resumir_imprevistos_mensuales(df: pd.DataFrame, año: int = None) -> pd.DataFrame:
     """
     Resume imprevistos por mes con reglas consistentes para los gráficos:
-    - Unificar por año+mes+placa+siniestro
-    - Mantener AUTORIZADO aunque la mano de obra inicial esté en 0
-    - Excluir solo CAMBIO rechazado sin mano de obra inicial
+    - No se filtra por ACCION ni CAUSAL
+    - Deduplicación por placa + siniestro (misma placa + mismo siniestro en el mismo mes
+      cuenta solo 1 vez). Si la placa es la misma pero el siniestro es diferente, cuenta
+      como imprevisto separado.
     """
     df_imprevistos = extraer_imprevistos_from_dataframe(df)
 
@@ -170,37 +189,19 @@ def resumir_imprevistos_mensuales(df: pd.DataFrame, año: int = None) -> pd.Data
         'siniestro',
         pd.Series('', index=df_work.index)
     ).astype(str).str.upper().str.strip()
-    df_work['accion'] = df_work.get(
-        'accion',
-        pd.Series('', index=df_work.index)
-    ).astype(str).str.upper().str.strip()
-    df_work['estatus'] = df_work.get(
-        'ESTATUS',
-        pd.Series('', index=df_work.index)
-    ).astype(str).str.upper().str.strip()
 
-    if 'M._DE_O._INICIAL' in df_work.columns:
-        df_work['mo_inicial'] = pd.to_numeric(df_work['M._DE_O._INICIAL'], errors='coerce').fillna(0)
-    else:
-        df_work['mo_inicial'] = 0
-
-    df_work['es_cambio'] = df_work['accion'].str.contains('CAMBIO', na=False, case=False)
-    df_work = df_work[
-        ~(
-            df_work['es_cambio'] &
-            (df_work['estatus'] == 'RECHAZADO') &
-            (df_work['mo_inicial'] <= 0)
-        )
-    ].copy()
-
-    if df_work.empty:
-        return pd.DataFrame(columns=['año', 'mes', 'total_imprevistos', 'culpa_taller'])
+    # Normalizar valores vacíos/NAN para que se traten consistentemente
+    df_work['siniestro'] = df_work['siniestro'].replace(['', 'NAN'], '')
 
     df_work = df_work[df_work['placa'].ne('') & df_work['placa'].ne('NAN')].copy()
 
+    # Deduplicación por placa + siniestro: solo elimina cuando AMBOS son iguales.
+    # Placa repetida con siniestro diferente cuenta como imprevisto separado.
     detalle = (
         df_work.groupby(['año', 'mes', 'placa', 'siniestro'], dropna=False)
-        .agg(es_culpa_taller=('es_culpa_taller', 'max'))
+        .agg(
+            es_culpa_taller=('es_culpa_taller', 'max')
+        )
         .reset_index()
     )
 
@@ -285,6 +286,16 @@ def merge_imprevistos_data(
     if frames:
         df_merged = pd.concat(frames, ignore_index=True)
         
+        # Normalize siniestro before deduplication
+        if 'siniestro' in df_merged.columns:
+            df_merged['siniestro'] = (
+                df_merged['siniestro']
+                .astype(str)
+                .str.upper()
+                .str.strip()
+                .replace(['', 'NAN'], '')
+            )
+
         # Deduplicate by placa+siniestro across sources
         if 'placa' in df_merged.columns and 'siniestro' in df_merged.columns:
             df_merged = df_merged.drop_duplicates(subset=['placa', 'siniestro'], keep='first')

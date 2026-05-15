@@ -131,6 +131,13 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
         fontName='Helvetica'
     )
     
+    # Mapa de número de mes a nombre en español
+    MESES_ES = {
+        1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+        5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+        9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+    }
+    
     # =========================================================================
     # HEADER DEL DOCUMENTO
     # =========================================================================
@@ -201,8 +208,6 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
     
     if 'DIFERENCIA' in df.columns:
         total_ahorro = df['DIFERENCIA'].sum()
-        vehiculos_unicos = df['PLACA'].nunique() if 'PLACA' in df.columns else 0
-        total_reparaciones = len(df)
         
         # Calcular honorarios si se incluyen
         fee_info = None
@@ -220,16 +225,12 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
         kpi_data = [
             [
                 Paragraph("<b>💰 Ahorro Total</b>", kpi_label_style),
-                Paragraph("<b>🚗 Vehículos</b>", kpi_label_style),
-                Paragraph("<b>🔧 Reparaciones</b>", kpi_label_style),
             ]
         ]
         
         kpi_values = [
             [
                 Paragraph(format_currency(total_ahorro), kpi_style),
-                Paragraph(f"{vehiculos_unicos:,}", kpi_style),
-                Paragraph(f"{total_reparaciones:,}", kpi_style),
             ]
         ]
         
@@ -247,9 +248,9 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
         
         # Determinar anchos de columna dinámicos
         if include_honorarios and fee_info:
-            col_widths = [1.3*inch, 1.3*inch, 1.3*inch, 1.3*inch, 1.3*inch]
+            col_widths = [2.2*inch, 2.2*inch, 2.2*inch]
         else:
-            col_widths = [2*inch, 2*inch, 2*inch]
+            col_widths = [6.5*inch]
         
         kpi_table = Table(kpi_table_data, colWidths=col_widths)
         kpi_table.setStyle(TableStyle([
@@ -278,14 +279,9 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
             for taller_id in df['TALLER_ORIGEN'].unique():
                 df_taller = df[df['TALLER_ORIGEN'] == taller_id]
                 ahorro_taller = df_taller['DIFERENCIA'].sum()
-                vehiculos_taller = df_taller['PLACA'].nunique() if 'PLACA' in df_taller.columns else 0
-                reparaciones_taller = len(df_taller)
-                
                 row_data = [
                     Paragraph(taller_id, body_style),
                     Paragraph(format_currency(ahorro_taller), body_style),
-                    Paragraph(f"{vehiculos_taller:,}", body_style),
-                    Paragraph(f"{reparaciones_taller:,}", body_style),
                 ]
                 
                 if include_honorarios and fee_info and taller_id in fee_info['by_taller']:
@@ -300,8 +296,6 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
             taller_headers = [
                 Paragraph("<b>Taller</b>", body_style),
                 Paragraph("<b>Ahorro</b>", body_style),
-                Paragraph("<b>Vehículos</b>", body_style),
-                Paragraph("<b>Reparaciones</b>", body_style),
             ]
             
             if include_honorarios and fee_info:
@@ -311,9 +305,9 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
             
             # Anchuras de columna
             if include_honorarios and fee_info:
-                taller_col_widths = [1.5*inch, 1.3*inch, 1.1*inch, 1.1*inch, 1.5*inch]
+                taller_col_widths = [2.5*inch, 2*inch, 2*inch]
             else:
-                taller_col_widths = [2*inch, 1.5*inch, 1.3*inch, 1.7*inch]
+                taller_col_widths = [3.25*inch, 3.25*inch]
             
             taller_table = Table(taller_table_data, colWidths=taller_col_widths)
             taller_table.setStyle(TableStyle([
@@ -340,10 +334,9 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
             elements.append(Paragraph("📅 Resumen Mensual", heading_style))
             
             resumen_mes = df.groupby(['AÑO', 'MES']).agg({
-                'DIFERENCIA': ['sum', 'mean', 'count'],
-                'PLACA': 'nunique' if 'PLACA' in df.columns else 'count'
+                'DIFERENCIA': ['sum', 'mean', 'count']
             }).round(0)
-            resumen_mes.columns = ['Ahorro Total', 'Promedio', 'Reparaciones', 'Vehículos']
+            resumen_mes.columns = ['Ahorro Total', 'Promedio', 'Reparaciones']
             resumen_mes = resumen_mes.reset_index()
             
             # Crear tabla mensual
@@ -352,21 +345,19 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
                 Paragraph("<b>Mes</b>", body_style),
                 Paragraph("<b>Ahorro Total</b>", body_style),
                 Paragraph("<b>Promedio</b>", body_style),
-                Paragraph("<b>Reparaciones</b>", body_style),
-                Paragraph("<b>Vehículos</b>", body_style),
             ]]
             
             for _, row in resumen_mes.iterrows():
+                mes_num = int(row['MES']) if pd.notna(row['MES']) else None
+                mes_nombre = MESES_ES.get(mes_num, str(row['MES'])) if mes_num else str(row['MES'])
                 mes_table_data.append([
                     Paragraph(str(int(row['AÑO'])), body_style),
-                    Paragraph(str(row['MES']), body_style),
+                    Paragraph(mes_nombre, body_style),
                     Paragraph(format_currency(row['Ahorro Total']), body_style),
                     Paragraph(format_currency(row['Promedio']), body_style),
-                    Paragraph(f"{int(row['Reparaciones']):,}", body_style),
-                    Paragraph(f"{int(row['Vehículos']):,}", body_style),
                 ])
             
-            mes_table = Table(mes_table_data, colWidths=[0.7*inch, 0.9*inch, 1.3*inch, 1.3*inch, 1.1*inch, 1.2*inch])
+            mes_table = Table(mes_table_data, colWidths=[1.1*inch, 1.4*inch, 2*inch, 2*inch])
             mes_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3B82F6')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),

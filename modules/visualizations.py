@@ -684,12 +684,8 @@ def render_efectividad_valoracion(df):
         df_vehiculos['año'] = df_vehiculos['año'].astype(int)
         df_vehiculos['mes'] = df_vehiculos['mes'].astype(int)
     else:
-        st.warning("⚠️ No se encontraron datos de la hoja 'TASA DE IMPREVISTOS'. Usando conteo del DataFrame como fallback.")
-        df_vehiculos = df_all.groupby(['año', 'mes']).agg(
-            total_vehiculos=('PLACA', 'count')
-        ).reset_index()
-        df_vehiculos['año'] = df_vehiculos['año'].astype(int)
-        df_vehiculos['mes'] = df_vehiculos['mes'].astype(int)
+        st.warning("⚠️ No se encontraron datos de la hoja 'TASA DE IMPREVISTOS'. No se puede calcular la efectividad sin el total de vehículos.")
+        return
 
     # ------------------------------------------------------------------
     # 3. Merge y cálculo de eficiencia (1 - tasa)
