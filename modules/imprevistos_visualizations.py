@@ -16,6 +16,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
+from io import BytesIO
 from datetime import datetime
 
 from .imprevistos_config import (
@@ -687,6 +688,177 @@ def render_grafico_culpa_taller_mensual(df=None):
 # DEMORA EN DEFINICIÓN DEL IMPREVISTO POR CIA Y ESTATUS
 # ============================================================================
 
+def _filtrar_demora_definicion_por_periodo_y_cia(
+    df: pd.DataFrame,
+    cia: str = "Todas",
+    año: int = None,
+    trimestre: str = "Todos",
+    mes: int = None,
+) -> pd.DataFrame:
+    """Filtra los datos de demora por CIA, año, trimestre y mes."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=df.columns if df is not None else None)
+
+    df_w = df.copy()
+
+    if cia and cia not in ("Todas", "Todos"):
+        if "COMPAÑIA_DE_SEGUROS" in df_w.columns:
+            df_w = df_w[df_w["COMPAÑIA_DE_SEGUROS"] == cia].copy()
+
+    if año is not None and "AÑO" in df_w.columns:
+        df_w["_AÑO_FILTRO"] = pd.to_numeric(df_w["AÑO"], errors="coerce")
+        df_w = df_w[df_w["_AÑO_FILTRO"] == int(año)].copy()
+
+    if trimestre and trimestre != "Todos" and "MES" in df_w.columns:
+        trimestre_map = {
+            "Q1": (1, 3),
+            "Q2": (4, 6),
+            "Q3": (7, 9),
+            "Q4": (10, 12),
+        }
+        if trimestre in trimestre_map:
+            mes_inicio, mes_fin = trimestre_map[trimestre]
+            df_w["_MES_FILTRO"] = pd.to_numeric(df_w["MES"], errors="coerce")
+            df_w = df_w[
+                (df_w["_MES_FILTRO"] >= mes_inicio)
+                & (df_w["_MES_FILTRO"] <= mes_fin)
+            ].copy()
+
+    if mes not in (None, "Todos") and "MES" in df_w.columns:
+        df_w["_MES_FILTRO"] = pd.to_numeric(df_w["MES"], errors="coerce")
+        df_w = df_w[df_w["_MES_FILTRO"] == int(mes)].copy()
+
+    return df_w.drop(columns=["_AÑO_FILTRO", "_MES_FILTRO"], errors="ignore")
+
+
+def _preparar_datos_demora_definicion(df: pd.DataFrame) -> pd.DataFrame:
+    """Normaliza, valida y deduplica registros para demora en definición."""
+    columnas = [
+        "PLACA", "SINIESTRO", "COMPAÑIA_DE_SEGUROS", "ESTATUS",
+        "FECHA_INGR", "FECHA_AUTO", "IMPREVISTO", "ACCION", "CAUSAL",
+        "_DEMORA_DIAS",
+    ]
+    if df is None or df.empty:
+        return pd.DataFrame(columns=columnas)
+
+    required_cols = {"FECHA_INGR", "FECHA_AUTO", "COMPAÑIA_DE_SEGUROS", "ESTATUS", "PLACA"}
+    if not required_cols.issubset(df.columns):
+        return pd.DataFrame(columns=columnas)
+
+    df_w = df.copy()
+    df_w["_PLACA"] = df_w["PLACA"].astype(str).str.upper().str.strip()
+    df_w["_SINIESTRO"] = (
+        df_w["SINIESTRO"].astype(str).str.upper().str.strip()
+        if "SINIESTRO" in df_w.columns
+        else ""
+    )
+
+    df_w["FECHA_INGR"] = parse_source_date_column(df_w["FECHA_INGR"], "FECHA_INGR")
+    df_w["FECHA_AUTO"] = parse_source_date_column(df_w["FECHA_AUTO"], "FECHA_AUTO")
+    df_w = df_w[df_w["FECHA_INGR"].notna() & df_w["FECHA_AUTO"].notna()].copy()
+
+    if df_w.empty:
+        return pd.DataFrame(columns=columnas)
+
+    año_limite = datetime.now().year + 1
+    df_w = df_w[
+        (df_w["FECHA_INGR"].dt.year >= 2000)
+        & (df_w["FECHA_INGR"].dt.year <= año_limite)
+        & (df_w["FECHA_AUTO"].dt.year >= 2000)
+        & (df_w["FECHA_AUTO"].dt.year <= año_limite)
+    ].copy()
+
+    if df_w.empty:
+        return pd.DataFrame(columns=columnas)
+
+    df_w["_DEMORA_DIAS"] = (df_w["FECHA_AUTO"] - df_w["FECHA_INGR"]).dt.days
+    df_w["ESTATUS"] = df_w["ESTATUS"].astype(str).str.upper().str.strip()
+    df_w = df_w[df_w["ESTATUS"].isin(["AUTORIZADO", "RECHAZADO"])].copy()
+    df_w = df_w.drop_duplicates(subset=["_PLACA", "_SINIESTRO"], keep="first")
+
+    return df_w
+
+
+def _preparar_reporte_demora_definicion(df: pd.DataFrame, periodo_label: str):
+    """Construye resumen y detalle para el reporte descargable de demora."""
+    resumen_cols = ["PERIODO", "CIA", "ESTATUS", "PROMEDIO_DEMORA_DIAS", "CONTEO"]
+    detalle_cols = [
+        "PERIODO", "PLACA", "SINIESTRO", "CIA", "ESTATUS",
+        "FECHA_INGR", "FECHA_AUTO", "DEMORA_DIAS", "IMPREVISTO",
+        "ACCION", "CAUSAL",
+    ]
+
+    df_w = _preparar_datos_demora_definicion(df)
+    if df_w.empty:
+        return pd.DataFrame(columns=resumen_cols), pd.DataFrame(columns=detalle_cols)
+
+    resumen = (
+        df_w.groupby(["COMPAÑIA_DE_SEGUROS", "ESTATUS"])
+        .agg(
+            PROMEDIO_DEMORA_DIAS=("_DEMORA_DIAS", "mean"),
+            CONTEO=("_DEMORA_DIAS", "count"),
+        )
+        .reset_index()
+        .rename(columns={"COMPAÑIA_DE_SEGUROS": "CIA"})
+    )
+    resumen["PROMEDIO_DEMORA_DIAS"] = resumen["PROMEDIO_DEMORA_DIAS"].round(1)
+    resumen.insert(0, "PERIODO", periodo_label)
+    resumen = resumen[resumen_cols].sort_values(["CIA", "ESTATUS"]).reset_index(drop=True)
+
+    detalle = pd.DataFrame({
+        "PERIODO": periodo_label,
+        "PLACA": df_w["_PLACA"],
+        "SINIESTRO": df_w["_SINIESTRO"],
+        "CIA": df_w["COMPAÑIA_DE_SEGUROS"].astype(str).str.strip(),
+        "ESTATUS": df_w["ESTATUS"],
+        "FECHA_INGR": df_w["FECHA_INGR"].dt.strftime("%Y-%m-%d"),
+        "FECHA_AUTO": df_w["FECHA_AUTO"].dt.strftime("%Y-%m-%d"),
+        "DEMORA_DIAS": df_w["_DEMORA_DIAS"].astype(int),
+        "IMPREVISTO": (
+            df_w["IMPREVISTO"].astype(str).str.strip()
+            if "IMPREVISTO" in df_w.columns
+            else ""
+        ),
+        "ACCION": (
+            df_w["ACCION"].astype(str).str.strip()
+            if "ACCION" in df_w.columns
+            else ""
+        ),
+        "CAUSAL": (
+            df_w["CAUSAL"].astype(str).str.strip()
+            if "CAUSAL" in df_w.columns
+            else ""
+        ),
+    })
+    detalle = detalle[detalle_cols].sort_values(["CIA", "ESTATUS", "DEMORA_DIAS"], ascending=[True, True, False])
+    detalle = detalle.reset_index(drop=True)
+
+    return resumen, detalle
+
+
+def _generar_excel_reporte_demora_definicion(resumen: pd.DataFrame, detalle: pd.DataFrame) -> bytes:
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        resumen.to_excel(writer, sheet_name="RESUMEN", index=False)
+        detalle.to_excel(writer, sheet_name="DETALLE", index=False)
+    return output.getvalue()
+
+
+def _periodo_label_demora(año, trimestre, mes, cia):
+    partes = []
+    if cia and cia not in ("Todas", "Todos"):
+        partes.append(f"CIA {cia}")
+    else:
+        partes.append("Todas las CIA")
+    if año is not None:
+        partes.append(f"Año {int(año)}")
+    if trimestre and trimestre != "Todos":
+        partes.append(str(trimestre))
+    if mes not in (None, "Todos"):
+        partes.append(f"Mes {int(mes):02d}")
+    return " - ".join(partes)
+
+
 def render_demora_definicion_imprevisto(df=None, año: int = None):
     """
     Gráfico de barras agrupadas: Demora en definición del imprevisto por CIA y Estatus.
@@ -701,53 +873,119 @@ def render_demora_definicion_imprevisto(df=None, año: int = None):
     """
     import datetime
 
-    st.subheader("⏱️ Demora en Definición del Imprevisto")
-
     if df is None or df.empty:
+        st.subheader("⏱️ Demora en Definición del Imprevisto")
         st.info("No hay datos disponibles para mostrar.")
         return
 
     required_cols = {'FECHA_INGR', 'FECHA_AUTO', 'COMPAÑIA_DE_SEGUROS', 'ESTATUS', 'PLACA'}
     if not required_cols.issubset(df.columns):
+        st.subheader("⏱️ Demora en Definición del Imprevisto")
         faltantes = required_cols - set(df.columns)
         st.warning(f"Faltan columnas necesarias: {', '.join(faltantes)}")
         return
 
-    df_w = df.copy()
+    df_filtros = df.copy()
+    df_periodos = df_filtros.copy()
+    if "AÑO" in df_periodos.columns:
+        df_periodos["_AÑO_FILTRO"] = pd.to_numeric(df_periodos["AÑO"], errors="coerce")
+    if "MES" in df_periodos.columns:
+        df_periodos["_MES_FILTRO"] = pd.to_numeric(df_periodos["MES"], errors="coerce")
 
-    # --- Filtro por año ---
-    if año and 'AÑO' in df_w.columns:
-        df_w['_AÑO'] = pd.to_numeric(df_w['AÑO'], errors='coerce')
-        df_w = df_w[df_w['_AÑO'] == año].copy()
-    elif año:
-        st.warning("Columna AÑO no disponible, se muestran todos los datos.")
+    title_col, action_col = st.columns([3, 2])
+    with title_col:
+        st.subheader("⏱️ Demora en Definición del Imprevisto")
 
-    if df_w.empty:
-        st.info(f"No hay datos para el año {año}." if año else "No hay datos disponibles.")
-        return
+    filtro_cols = st.columns(4)
 
-    # --- Selector de año interactivo ---
-    if 'AÑO' in df.columns:
+    cias = sorted(df_filtros["COMPAÑIA_DE_SEGUROS"].dropna().astype(str).str.strip().unique().tolist())
+    cias = [cia_item for cia_item in cias if cia_item]
+    with filtro_cols[0]:
+        cia_sel = st.selectbox(
+            "CIA",
+            options=["Todas"] + cias,
+            key="demora_definicion_cia",
+        )
+
+    if "AÑO" in df_periodos.columns:
         años_disponibles = sorted(
-            pd.to_numeric(df['AÑO'], errors='coerce').dropna().unique().tolist(),
-            reverse=True
+            df_periodos["_AÑO_FILTRO"].dropna().astype(int).unique().tolist(),
+            reverse=True,
         )
-        año_actual = datetime.datetime.now().year
-        default_idx = años_disponibles.index(año_actual) if año_actual in años_disponibles else 0
-        año_sel = st.selectbox(
-            "Año",
-            options=años_disponibles,
-            index=default_idx,
-            key="demora_definicion_año"
-        )
-        df_w = df.copy()
-        df_w['_AÑO'] = pd.to_numeric(df_w['AÑO'], errors='coerce')
-        df_w = df_w[df_w['_AÑO'] == año_sel].copy()
-        if df_w.empty:
-            st.info(f"No hay datos para el año {año_sel}.")
-            return
+        if años_disponibles:
+            año_actual = datetime.datetime.now().year
+            default_año = año if año in años_disponibles else año_actual if año_actual in años_disponibles else años_disponibles[0]
+            with filtro_cols[1]:
+                año_sel = st.selectbox(
+                    "Año",
+                    options=años_disponibles,
+                    index=años_disponibles.index(default_año),
+                    key="demora_definicion_año",
+                )
+        else:
+            año_sel = año
+            with filtro_cols[1]:
+                st.caption("Año no disponible")
     else:
         año_sel = año
+        with filtro_cols[1]:
+            st.caption("Año no disponible")
+
+    with filtro_cols[2]:
+        trimestre_sel = st.selectbox(
+            "Trimestre",
+            options=["Todos", "Q1", "Q2", "Q3", "Q4"],
+            help="Q1: Ene-Mar | Q2: Abr-Jun | Q3: Jul-Sep | Q4: Oct-Dic",
+            key="demora_definicion_trimestre",
+        )
+
+    meses_disponibles = []
+    if "MES" in df_periodos.columns:
+        meses_disponibles = sorted(
+            df_periodos["_MES_FILTRO"]
+            .dropna()
+            .astype(int)
+            .loc[lambda series: (series >= 1) & (series <= 12)]
+            .unique()
+            .tolist()
+        )
+    with filtro_cols[3]:
+        mes_sel = st.selectbox(
+            "Mes",
+            options=["Todos"] + meses_disponibles,
+            format_func=lambda value: "Todos" if value == "Todos" else datetime.datetime(2000, int(value), 1).strftime("%B"),
+            key="demora_definicion_mes",
+        )
+
+    df_w = _filtrar_demora_definicion_por_periodo_y_cia(
+        df,
+        cia=cia_sel,
+        año=año_sel,
+        trimestre=trimestre_sel,
+        mes=mes_sel,
+    )
+
+    periodo_label = _periodo_label_demora(año_sel, trimestre_sel, mes_sel, cia_sel)
+    resumen_reporte, detalle_reporte = _preparar_reporte_demora_definicion(df_w, periodo_label)
+    excel_reporte = _generar_excel_reporte_demora_definicion(resumen_reporte, detalle_reporte)
+    filename_cia = "todas" if cia_sel == "Todas" else str(cia_sel).lower().replace(" ", "_")
+    filename_año = str(año_sel) if año_sel is not None else "todos"
+    filename_mes = "todos" if mes_sel == "Todos" else f"{int(mes_sel):02d}"
+
+    with action_col:
+        st.download_button(
+            label="📥 Descargar reporte",
+            data=excel_reporte,
+            file_name=f"demora_definicion_imprevisto_{filename_cia}_{filename_año}_{trimestre_sel}_{filename_mes}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            disabled=resumen_reporte.empty and detalle_reporte.empty,
+            help="Descarga el resumen por CIA/Estatus y el detalle filtrado visible.",
+            use_container_width=True,
+        )
+
+    if df_w.empty:
+        st.info(f"No hay datos para los filtros seleccionados: {periodo_label}.")
+        return
 
     # --- Limpiar PLACA y SINIESTRO para deduplicación ---
     df_w['_PLACA'] = df_w['PLACA'].astype(str).str.upper().str.strip()
