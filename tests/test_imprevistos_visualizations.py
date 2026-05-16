@@ -4,11 +4,15 @@ import pandas as pd
 
 from modules.imprevistos_visualizations import (
     _filtrar_demora_definicion_por_periodo_y_cia,
+    _format_month_year_label,
     _preparar_reporte_demora_definicion,
 )
 
 
 class ImprevistosVisualizationsTests(unittest.TestCase):
+    def test_format_month_year_label_usa_el_anio_real_del_registro(self):
+        self.assertEqual(_format_month_year_label(3, 2026), "March 2026")
+
     def test_filtra_demora_definicion_por_cia_mes_trimestre_y_anio(self):
         df = pd.DataFrame(
             [

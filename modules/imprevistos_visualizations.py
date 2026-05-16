@@ -38,6 +38,11 @@ from .theme import (
 )
 
 
+def _format_month_year_label(mes, año) -> str:
+    """Return the display label for a month using the record's real year."""
+    return datetime(int(año), int(mes), 1).strftime('%B %Y')
+
+
 # ============================================================================
 # HELPER: Cargar datos de vehículos desde TASA DE IMPREVISTOS
 # ============================================================================
@@ -223,8 +228,9 @@ def render_tabla_resumen_imprevistos(
         df_resumen['tasa'] = ((df_resumen['total_imprevistos'] / df_resumen['total_vehiculos'] * 100)).round(1)
         df_resumen['tasa_culpa_taller'] = ((df_resumen['culpa_taller'] / df_resumen['total_vehiculos'] * 100)).round(1)
         df_resumen['tasa_no_culpa_taller'] = ((df_resumen['no_culpa_taller'] / df_resumen['total_vehiculos'] * 100)).round(1)
-        df_resumen['mes_nombre'] = df_resumen["mes"].apply(
-            lambda x: datetime(2000, int(x), 1).strftime('%B %Y')
+        df_resumen['mes_nombre'] = df_resumen.apply(
+            lambda row: _format_month_year_label(row["mes"], row["año"]),
+            axis=1
         )
         df_resumen = df_resumen.sort_values(['año', 'mes'])
     else:
@@ -264,38 +270,6 @@ def render_tabla_resumen_imprevistos(
         hide_index=True,
         height=400
     )
-    
-    # Add explanation
-    with st.expander("ℹ️ ¿Cómo se calcula la tasa?"):
-        st.markdown("""
-        **Fórmula de cálculo:**
-        
-        ```
-        Tasa (%) = (Cantidad de Imprevistos / Cantidad de Vehículos) × 100
-        ```
-        
-        **Total de vehículos:** Se obtiene de la hoja **'TASA DE IMPREVISTOS'** del archivo Excel/Google Sheets.
-        
-        **Reglas de clasificación:**
-        
-        - **Culpa del Taller:**
-          - Imprevistos con acción = "cambio" y causales como:
-            - Digitación
-            - No cotizado
-            - Predesarme
-            - Sin fotos claras
-            - Sin diagnóstico
-            - Daño en proceso
-            - No es reparable
-        
-        - **NO es Culpa del Taller:**
-          - Imprevistos con cambio de repuestos
-          - Imprevistos con acción = "cambio" y causal = "No visible"
-        
-        **Deduplicación:**
-        - Si una placa+siniestro tiene más de 1 imprevisto, se cuenta solo 1
-        """)
-
 
 # ============================================================================
 # FAULT CLASSIFICATION CHART
