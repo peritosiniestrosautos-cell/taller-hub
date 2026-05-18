@@ -14,12 +14,18 @@ from reportlab.lib import colors
 from reportlab.lib.units import inch, mm
 from reportlab.platypus import (
     SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer,
-    PageBreak, KeepTogether
+    PageBreak, KeepTogether, Image
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.platypus.flowables import HRFlowable
 from .fee_config import load_fee_config, calculate_fees_per_month, format_currency
+from .imprevistos_processor import resumir_imprevistos_mensuales, extraer_imprevistos_from_dataframe
+from .data_loader import load_tasa_imprevistos_from_excel
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 PDF_KPI_FONT_SIZE = 10
 
@@ -29,7 +35,310 @@ def _format_honorarios_kpi_value(honorarios, fee_percentage=None):
     return format_currency(honorarios)
 
 
-def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_nombre="Taller Hub"):
+def _get_vehiculos_por_mes_pdf():
+    """
+    Obtiene datos de vehículos por mes para el PDF.
+    Intenta session_state primero, luego carga desde Excel.
+    """
+    try:
+        import streamlit as st
+        df_tasa = st.session_state.get("tasa_imprevistos_data")
+    except Exception:
+        df_tasa = None
+
+    if df_tasa is None or df_tasa.empty:
+        df_tasa, _ = load_tasa_imprevistos_from_excel()
+
+    if df_tasa is None or df_tasa.empty:
+        return pd.DataFrame(columns=['año', 'mes', 'total_vehiculos'])
+
+    df_vehiculos = df_tasa.groupby(['AÑO', 'MES']).agg(
+        total_vehiculos=('TOTAL', 'sum')
+    ).reset_index()
+    df_vehiculos = df_vehiculos.rename(columns={'AÑO': 'año', 'MES': 'mes'})
+    df_vehiculos['año'] = pd.to_numeric(df_vehiculos['año'], errors='coerce').astype(int)
+    df_vehiculos['mes'] = pd.to_numeric(df_vehiculos['mes'], errors='coerce').astype(int)
+    return df_vehiculos
+
+
+def _calcular_tasa_imprevistos_pdf(df):
+    """Calcula la tasa de imprevistos mensual para el PDF."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df_imp_mes = resumir_imprevistos_mensuales(df=df)
+    if df_imp_mes.empty:
+        return pd.DataFrame()
+
+    df_vehiculos = _get_vehiculos_por_mes_pdf()
+    if df_vehiculos.empty:
+        return pd.DataFrame()
+
+    df_resumen = df_vehiculos.merge(df_imp_mes, on=['año', 'mes'], how='outer')
+    df_resumen['total_vehiculos'] = df_resumen['total_vehiculos'].fillna(0).astype(int)
+    df_resumen['total_imprevistos'] = df_resumen['total_imprevistos'].fillna(0).astype(int)
+    df_resumen['responsabilidad_taller'] = df_resumen['culpa_taller'].fillna(0).astype(int)
+    df_resumen['no_responsabilidad_taller'] = df_resumen['total_imprevistos'] - df_resumen['responsabilidad_taller']
+    df_resumen['tasa'] = ((df_resumen['total_imprevistos'] / df_resumen['total_vehiculos'] * 100)).round(1)
+    df_resumen['tasa_responsabilidad_taller'] = ((df_resumen['responsabilidad_taller'] / df_resumen['total_vehiculos'] * 100)).round(1)
+    df_resumen['tasa_no_responsabilidad_taller'] = ((df_resumen['no_responsabilidad_taller'] / df_resumen['total_vehiculos'] * 100)).round(1)
+
+    MESES_ES = {
+        1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+        5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+        9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+    }
+    df_resumen['mes_nombre'] = df_resumen.apply(
+        lambda row: f"{MESES_ES.get(int(row['mes']), str(int(row['mes'])))} {int(row['año'])}",
+        axis=1
+    )
+    df_resumen = df_resumen.sort_values(['año', 'mes'])
+    return df_resumen
+
+
+def _generar_grafico_tasa_imprevistos(df_tasa):
+    """Genera un gráfico de línea con la tasa de imprevistos mensual."""
+    if df_tasa is None or df_tasa.empty:
+        return None
+
+    fig, ax = plt.subplots(figsize=(6.5, 3))
+    ax.plot(df_tasa['mes_nombre'], df_tasa['tasa'], marker='o', linewidth=2.5,
+            color='#1E40AF', markersize=8, markerfacecolor='#3B82F6', markeredgecolor='white', markeredgewidth=1.5)
+
+    for i, row in df_tasa.iterrows():
+        ax.annotate(f"{row['tasa']:.1f}%", (i, row['tasa']),
+                    textcoords="offset points", xytext=(0, 10), ha='center',
+                    fontsize=8, color='#1E40AF', fontweight='bold')
+
+    ax.set_title('Tasa de Imprevistos Mensual', fontsize=12, fontweight='bold', color='#1E293B', pad=15)
+    ax.set_ylabel('Tasa (%)', fontsize=9, color='#64748B')
+    ax.tick_params(axis='x', rotation=45, labelsize=8, colors='#64748B')
+    ax.tick_params(axis='y', labelsize=8, colors='#64748B')
+    ax.set_ylim(bottom=0)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#E2E8F0')
+    ax.spines['bottom'].set_color('#E2E8F0')
+    ax.grid(axis='y', linestyle='--', alpha=0.4, color='#CBD5E1')
+    ax.set_axisbelow(True)
+    fig.tight_layout()
+
+    img_buffer = io.BytesIO()
+    fig.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight',
+                facecolor='white', edgecolor='none')
+    img_buffer.seek(0)
+    plt.close(fig)
+    return img_buffer
+
+
+def _preparar_cambio_repuestos_pdf(df, año=None, mes=None):
+    """Prepara el detalle de imprevistos con cambio de repuestos para el PDF."""
+    columnas_reporte = ["PLACA", "LINEA", "CIA", "IMPREVISTO", "CAUSAL"]
+
+    if df is None or df.empty:
+        return pd.DataFrame(columns=columnas_reporte)
+
+    required = {"PLACA", "ACCION"}
+    if not required.issubset(df.columns):
+        return pd.DataFrame(columns=columnas_reporte)
+
+    df_w = df.copy()
+    df_w["_ACCION"] = df_w["ACCION"].astype(str).str.upper().str.strip()
+    df_w = df_w[df_w["_ACCION"].str.contains("CAMBIO", na=False)].copy()
+
+    if df_w.empty:
+        return pd.DataFrame(columns=columnas_reporte)
+
+    # Filtrar por mes en curso si se especifica
+    if año is not None and mes is not None and "AÑO" in df_w.columns and "MES" in df_w.columns:
+        df_w["_AÑO"] = pd.to_numeric(df_w["AÑO"], errors="coerce")
+        df_w["_MES"] = pd.to_numeric(df_w["MES"], errors="coerce")
+        df_w = df_w[(df_w["_AÑO"] == int(año)) & (df_w["_MES"] == int(mes))].copy()
+
+    if df_w.empty:
+        return pd.DataFrame(columns=columnas_reporte)
+
+    cia_col = (
+        "COMPAÑIA_DE_SEGUROS"
+        if "COMPAÑIA_DE_SEGUROS" in df_w.columns
+        else "COMPAÑÍA_DE_SEGUROS"
+        if "COMPAÑÍA_DE_SEGUROS" in df_w.columns
+        else None
+    )
+
+    reporte = pd.DataFrame({
+        "PLACA": df_w["PLACA"].astype(str).str.upper().str.strip(),
+        "LINEA": (
+            df_w["LINEA"].astype(str).str.upper().str.strip()
+            if "LINEA" in df_w.columns
+            else ""
+        ),
+        "CIA": df_w[cia_col].astype(str).str.strip().str.upper() if cia_col else "",
+        "IMPREVISTO": (
+            df_w["IMPREVISTO"].astype(str).str.strip().str.upper()
+            if "IMPREVISTO" in df_w.columns
+            else ""
+        ),
+        "CAUSAL": (
+            df_w["CAUSAL"].astype(str).str.strip().str.upper()
+            if "CAUSAL" in df_w.columns
+            else ""
+        ),
+    })
+
+    return reporte.sort_values(["PLACA", "CIA", "IMPREVISTO"]).reset_index(drop=True)
+
+
+def _generar_grafico_cambio_repuestos(df):
+    """Genera un gráfico de barras con imprevistos con cambio de repuestos por mes."""
+    if df is None or df.empty or 'AÑO' not in df.columns or 'MES' not in df.columns or 'ACCION' not in df.columns:
+        return None
+
+    df_w = df.copy()
+    df_w["_ACCION"] = df_w["ACCION"].astype(str).str.upper().str.strip()
+    df_w = df_w[df_w["_ACCION"].str.contains("CAMBIO", na=False)]
+
+    if df_w.empty:
+        return None
+
+    df_w['_AÑO'] = pd.to_numeric(df_w['AÑO'], errors='coerce')
+    df_w['_MES'] = pd.to_numeric(df_w['MES'], errors='coerce')
+    df_w = df_w[(df_w['_AÑO'].notna()) & (df_w['_MES'].notna()) &
+                (df_w['_AÑO'] > 2000) & (df_w['_MES'] >= 1) & (df_w['_MES'] <= 12)]
+
+    if df_w.empty:
+        return None
+
+    resumen = df_w.groupby(['_AÑO', '_MES']).size().reset_index(name='cantidad')
+    resumen = resumen.sort_values(['_AÑO', '_MES'])
+
+    MESES_ES = {1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr', 5: 'May', 6: 'Jun',
+                7: 'Jul', 8: 'Ago', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'}
+    resumen['periodo'] = resumen.apply(
+        lambda r: f"{MESES_ES.get(int(r['_MES']), str(int(r['_MES'])))} {int(r['_AÑO'])}", axis=1
+    )
+
+    fig, ax = plt.subplots(figsize=(6.5, 3))
+    bars = ax.bar(resumen['periodo'], resumen['cantidad'], color='#3B82F6', edgecolor='white', linewidth=0.5)
+
+    for bar in bars:
+        height = bar.get_height()
+        ax.annotate(f"{int(height)}", xy=(bar.get_x() + bar.get_width() / 2, height),
+                    xytext=(0, 3), textcoords="offset points", ha='center', va='bottom',
+                    fontsize=8, fontweight='bold', color='#1E40AF')
+
+    ax.set_title('Imprevistos con Cambio de Repuestos por Mes', fontsize=12, fontweight='bold',
+                 color='#1E293B', pad=15)
+    ax.set_ylabel('Cantidad', fontsize=9, color='#64748B')
+    ax.tick_params(axis='x', rotation=45, labelsize=8, colors='#64748B')
+    ax.tick_params(axis='y', labelsize=8, colors='#64748B')
+    ax.set_ylim(bottom=0)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#E2E8F0')
+    ax.spines['bottom'].set_color('#E2E8F0')
+    ax.grid(axis='y', linestyle='--', alpha=0.4, color='#CBD5E1')
+    ax.set_axisbelow(True)
+    fig.tight_layout()
+
+    img_buffer = io.BytesIO()
+    fig.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight',
+                facecolor='white', edgecolor='none')
+    img_buffer.seek(0)
+    plt.close(fig)
+    return img_buffer
+
+
+def _calcular_comparativo_ahorro_pdf(df):
+    """Calcula comparativo de ahorros por mes con % desviación."""
+    if df is None or df.empty or 'AÑO' not in df.columns or 'MES' not in df.columns or 'DIFERENCIA' not in df.columns:
+        return pd.DataFrame(), pd.DataFrame()
+
+    df_valid = df[(df['AÑO'].notna()) & (df['MES'].notna()) &
+                  (df['AÑO'] > 2000) & (df['MES'] >= 1) & (df['MES'] <= 12)]
+
+    if df_valid.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    resumen = df_valid.groupby(['AÑO', 'MES'])['DIFERENCIA'].sum().reset_index()
+    resumen['AÑO'] = resumen['AÑO'].astype(int)
+    resumen['MES'] = resumen['MES'].astype(int)
+    resumen = resumen.sort_values(['AÑO', 'MES']).reset_index(drop=True)
+
+    if len(resumen) < 2:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # Comparativo mes a mes
+    resumen['ahorro_anterior'] = resumen['DIFERENCIA'].shift(1)
+    resumen['desviacion_pct'] = resumen.apply(
+        lambda r: ((r['DIFERENCIA'] - r['ahorro_anterior']) / r['ahorro_anterior'] * 100)
+        if pd.notna(r['ahorro_anterior']) and r['ahorro_anterior'] != 0 else 0,
+        axis=1
+    ).round(1)
+
+    MESES_ES = {
+        1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr',
+        5: 'May', 6: 'Jun', 7: 'Jul', 8: 'Ago',
+        9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'
+    }
+    resumen['periodo'] = resumen.apply(
+        lambda r: f"{MESES_ES.get(int(r['MES']), str(int(r['MES'])))} {int(r['AÑO'])}", axis=1
+    )
+    resumen['periodo_anterior'] = resumen['periodo'].shift(1)
+    resumen['indicador'] = resumen['desviacion_pct'].apply(
+        lambda x: "▲ Aumentó" if x > 0 else ("▼ Disminuyó" if x < 0 else "● Sin cambio")
+    )
+
+    # Comparativo trimestral
+    df_trim = df_valid.copy()
+    df_trim['TRIMESTRE'] = ((df_trim['MES'].astype(int) - 1) // 3 + 1)
+    trimestral = df_trim.groupby(['AÑO', 'TRIMESTRE'])['DIFERENCIA'].sum().reset_index()
+    trimestral = trimestral.sort_values(['AÑO', 'TRIMESTRE']).reset_index(drop=True)
+
+    # Solo incluir trimestres con datos reales (> 0) para evitar falsos "disminuyó"
+    trimestral = trimestral[trimestral['DIFERENCIA'] > 0].reset_index(drop=True)
+
+    if len(trimestral) < 2:
+        return resumen, trimestral
+
+    trimestral['ahorro_anterior'] = trimestral['DIFERENCIA'].shift(1)
+    trimestral['desviacion_pct'] = trimestral.apply(
+        lambda r: ((r['DIFERENCIA'] - r['ahorro_anterior']) / r['ahorro_anterior'] * 100)
+        if pd.notna(r['ahorro_anterior']) and r['ahorro_anterior'] != 0 else 0,
+        axis=1
+    ).round(1)
+    trimestral['periodo'] = trimestral.apply(
+        lambda r: f"Q{int(r['TRIMESTRE'])} {int(r['AÑO'])}", axis=1
+    )
+    trimestral['periodo_anterior'] = trimestral['periodo'].shift(1)
+    trimestral['indicador'] = trimestral['desviacion_pct'].apply(
+        lambda x: "▲ Aumentó" if x > 0 else ("▼ Disminuyó" if x < 0 else "● Sin cambio")
+    )
+
+    return resumen, trimestral
+
+
+def _calcular_causales_imprevistos_pdf(df):
+    """Calcula causales de imprevistos con cantidad total para el PDF."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df_imp = extraer_imprevistos_from_dataframe(df)
+    if df_imp.empty or 'causal' not in df_imp.columns:
+        return pd.DataFrame()
+
+    df_causal = df_imp[df_imp['causal'].notna() & (df_imp['causal'].astype(str).str.strip() != '')].copy()
+    if df_causal.empty:
+        return pd.DataFrame()
+
+    resumen = df_causal.groupby('causal').size().reset_index(name='cantidad')
+    total = resumen['cantidad'].sum()
+    resumen['porcentaje'] = ((resumen['cantidad'] / total * 100) if total > 0 else 0).round(1)
+    resumen = resumen.sort_values('cantidad', ascending=False).reset_index(drop=True)
+    return resumen
+
+
+def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_nombre="Taller Hub", filtros_graficos=None):
     """
     Generar reporte PDF del dashboard actual
     
@@ -37,6 +346,8 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
         df: DataFrame con los datos filtrados
         filtros_aplicados: Diccionario con los filtros aplicados
         include_honorarios: Boolean para incluir/excluir honorarios
+        taller_nombre: Nombre del taller para el footer
+        filtros_graficos: Diccionario con filtros aplicados a gráficos específicos
     
     Returns:
         BytesIO: Buffer con el PDF generado
@@ -328,10 +639,119 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
             elements.append(Spacer(1, 15))
         
         # =========================================================================
-        # RESUMEN MENSUAL
+        # TASA DE IMPREVISTOS (Gráfico + Tabla)
+        # =========================================================================
+        df_tasa_imp = _calcular_tasa_imprevistos_pdf(df)
+        if not df_tasa_imp.empty:
+            elements.append(Paragraph("📊 Tasa de Imprevistos", heading_style))
+            
+            # Gráfico
+            grafico_tasa_buf = _generar_grafico_tasa_imprevistos(df_tasa_imp)
+            if grafico_tasa_buf:
+                elements.append(Image(grafico_tasa_buf, width=6.5*inch, height=3*inch))
+                elements.append(Spacer(1, 10))
+            
+            # Tabla
+            tasa_table_data = [[
+                Paragraph("<b>Mes</b>", body_style),
+                Paragraph("<b>Vehículos</b>", body_style),
+                Paragraph("<b>Imprevistos</b>", body_style),
+                Paragraph("<b>Resp. Taller</b>", body_style),
+                Paragraph("<b>No Resp. Taller</b>", body_style),
+                Paragraph("<b>Tasa Total</b>", body_style),
+            ]]
+            
+            for _, row in df_tasa_imp.iterrows():
+                tasa_table_data.append([
+                    Paragraph(str(row['mes_nombre']), body_style),
+                    Paragraph(f"{int(row['total_vehiculos']):,}", body_style),
+                    Paragraph(f"{int(row['total_imprevistos']):,}", body_style),
+                    Paragraph(f"{int(row['responsabilidad_taller']):,}", body_style),
+                    Paragraph(f"{int(row['no_responsabilidad_taller']):,}", body_style),
+                    Paragraph(f"{row['tasa']:.1f}%", body_style),
+                ])
+            
+            tasa_table = Table(tasa_table_data, colWidths=[1.5*inch, 1*inch, 1*inch, 1*inch, 1*inch, 1*inch])
+            tasa_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3B82F6')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F8FAFC')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#E2E8F0')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F1F5F9')]),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+            
+            elements.append(tasa_table)
+            elements.append(Spacer(1, 15))
+        
+        # =========================================================================
+        # IMPREVISTOS CON CAMBIO DE REPUESTOS (Gráfico + Tabla del mes en curso)
+        # =========================================================================
+        ahora = datetime.now()
+        año_actual = ahora.year
+        mes_actual = ahora.month
+        df_cambio_rep = _preparar_cambio_repuestos_pdf(df, año=año_actual, mes=mes_actual)
+        
+        # Gráfico histórico (siempre mostrar si hay datos de cambio)
+        grafico_cambio_buf = _generar_grafico_cambio_repuestos(df)
+        if grafico_cambio_buf:
+            elements.append(Paragraph("🔧 Imprevistos con Cambio de Repuestos", heading_style))
+            elements.append(Image(grafico_cambio_buf, width=6.5*inch, height=3*inch))
+            elements.append(Spacer(1, 10))
+        
+        if not df_cambio_rep.empty:
+            mes_nombre_actual = MESES_ES.get(mes_actual, str(mes_actual))
+            elements.append(Paragraph(f"Detalle del Mes en Curso ({mes_nombre_actual} {año_actual})", subheading_style))
+            
+            cambio_table_data = [[
+                Paragraph("<b>PLACA</b>", body_style),
+                Paragraph("<b>LÍNEA</b>", body_style),
+                Paragraph("<b>CIA</b>", body_style),
+                Paragraph("<b>IMPREVISTO</b>", body_style),
+                Paragraph("<b>CAUSAL</b>", body_style),
+            ]]
+            
+            for _, row in df_cambio_rep.iterrows():
+                cambio_table_data.append([
+                    Paragraph(str(row['PLACA']), body_style),
+                    Paragraph(str(row['LINEA']), body_style),
+                    Paragraph(str(row['CIA']), body_style),
+                    Paragraph(str(row['IMPREVISTO']), body_style),
+                    Paragraph(str(row['CAUSAL']), body_style),
+                ])
+            
+            cambio_table = Table(cambio_table_data, colWidths=[1*inch, 1.1*inch, 1*inch, 1.7*inch, 1.7*inch])
+            cambio_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3B82F6')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F8FAFC')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#E2E8F0')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F1F5F9')]),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+            
+            elements.append(cambio_table)
+            elements.append(Spacer(1, 15))
+        elif grafico_cambio_buf:
+            # Si hay gráfico pero no hay datos para el mes actual, mostrar mensaje
+            mes_nombre_actual = MESES_ES.get(mes_actual, str(mes_actual))
+            elements.append(Paragraph(f"No hay imprevistos con cambio de repuestos para {mes_nombre_actual} {año_actual}.", body_style))
+            elements.append(Spacer(1, 15))
+        
+        # =========================================================================
+        # RESUMEN MENSUAL (Ahorro por Mes)
         # =========================================================================
         if 'AÑO' in df.columns and 'MES' in df.columns:
-            elements.append(Paragraph("📅 Resumen Mensual", heading_style))
+            elements.append(Paragraph("📅 Ahorro por Mes", heading_style))
             
             resumen_mes = df.groupby(['AÑO', 'MES']).agg({
                 'DIFERENCIA': ['sum', 'mean', 'count']
@@ -345,6 +765,7 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
                 Paragraph("<b>Mes</b>", body_style),
                 Paragraph("<b>Ahorro Total</b>", body_style),
                 Paragraph("<b>Promedio</b>", body_style),
+                Paragraph("<b>Reparaciones</b>", body_style),
             ]]
             
             for _, row in resumen_mes.iterrows():
@@ -355,9 +776,10 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
                     Paragraph(mes_nombre, body_style),
                     Paragraph(format_currency(row['Ahorro Total']), body_style),
                     Paragraph(format_currency(row['Promedio']), body_style),
+                    Paragraph(f"{int(row['Reparaciones']):,}", body_style),
                 ])
             
-            mes_table = Table(mes_table_data, colWidths=[1.1*inch, 1.4*inch, 2*inch, 2*inch])
+            mes_table = Table(mes_table_data, colWidths=[0.9*inch, 1.2*inch, 1.6*inch, 1.6*inch, 1.2*inch])
             mes_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3B82F6')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
@@ -375,7 +797,135 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
             elements.append(Spacer(1, 15))
         
         # =========================================================================
-        # TOP CAUSALES
+        # COMPARATIVO DE AHORROS (Mensual y Trimestral con % Desviación)
+        # =========================================================================
+        comparativo_mes, comparativo_trim = _calcular_comparativo_ahorro_pdf(df)
+        if not comparativo_mes.empty:
+            elements.append(Paragraph("📈 Ahorros Generales - Comparativo con Desviación", heading_style))
+            
+            # Tabla mensual
+            elements.append(Paragraph("Comparativo Mensual", subheading_style))
+            comp_mes_data = [[
+                Paragraph("<b>Período</b>", body_style),
+                Paragraph("<b>Ahorro</b>", body_style),
+                Paragraph("<b>Período Anterior</b>", body_style),
+                Paragraph("<b>% Desviación</b>", body_style),
+                Paragraph("<b>Tendencia</b>", body_style),
+            ]]
+            
+            for _, row in comparativo_mes.iterrows():
+                desv_color = colors.HexColor('#16A34A') if row['desviacion_pct'] > 0 else (
+                    colors.HexColor('#DC2626') if row['desviacion_pct'] < 0 else colors.HexColor('#64748B')
+                )
+                comp_mes_data.append([
+                    Paragraph(str(row['periodo']), body_style),
+                    Paragraph(format_currency(row['DIFERENCIA']), body_style),
+                    Paragraph(str(row['periodo_anterior']) if pd.notna(row['periodo_anterior']) else "-", body_style),
+                    Paragraph(f"{row['desviacion_pct']:.1f}%", body_style),
+                    Paragraph(str(row['indicador']), ParagraphStyle(
+                        'Tendencia', parent=body_style, textColor=desv_color, fontName='Helvetica-Bold'
+                    )),
+                ])
+            
+            comp_mes_table = Table(comp_mes_data, colWidths=[1.2*inch, 1.4*inch, 1.4*inch, 1.2*inch, 1.3*inch])
+            comp_mes_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3B82F6')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F8FAFC')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#E2E8F0')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F1F5F9')]),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+            
+            elements.append(comp_mes_table)
+            elements.append(Spacer(1, 10))
+            
+            # Tabla trimestral
+            if not comparativo_trim.empty and len(comparativo_trim) >= 2:
+                elements.append(Paragraph("Comparativo Trimestral", subheading_style))
+                comp_trim_data = [[
+                    Paragraph("<b>Período</b>", body_style),
+                    Paragraph("<b>Ahorro</b>", body_style),
+                    Paragraph("<b>Período Anterior</b>", body_style),
+                    Paragraph("<b>% Desviación</b>", body_style),
+                    Paragraph("<b>Tendencia</b>", body_style),
+                ]]
+                
+                for _, row in comparativo_trim.iterrows():
+                    desv_color = colors.HexColor('#16A34A') if row['desviacion_pct'] > 0 else (
+                        colors.HexColor('#DC2626') if row['desviacion_pct'] < 0 else colors.HexColor('#64748B')
+                    )
+                    comp_trim_data.append([
+                        Paragraph(str(row['periodo']), body_style),
+                        Paragraph(format_currency(row['DIFERENCIA']), body_style),
+                        Paragraph(str(row['periodo_anterior']) if pd.notna(row['periodo_anterior']) else "-", body_style),
+                        Paragraph(f"{row['desviacion_pct']:.1f}%", body_style),
+                        Paragraph(str(row['indicador']), ParagraphStyle(
+                            'Tendencia', parent=body_style, textColor=desv_color, fontName='Helvetica-Bold'
+                        )),
+                    ])
+                
+                comp_trim_table = Table(comp_trim_data, colWidths=[1.2*inch, 1.4*inch, 1.4*inch, 1.2*inch, 1.3*inch])
+                comp_trim_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3B82F6')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 8),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F8FAFC')),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#E2E8F0')),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F1F5F9')]),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ]))
+                
+                elements.append(comp_trim_table)
+                elements.append(Spacer(1, 15))
+        
+        # =========================================================================
+        # CAUSALES DE IMPREVISTOS (Barras - Total de Datos)
+        # =========================================================================
+        df_causales_imp = _calcular_causales_imprevistos_pdf(df)
+        if not df_causales_imp.empty:
+            elements.append(Paragraph("🔍 Causales de Imprevistos", heading_style))
+            
+            causal_imp_data = [[
+                Paragraph("<b>Causal</b>", body_style),
+                Paragraph("<b>Cantidad</b>", body_style),
+                Paragraph("<b>% del Total</b>", body_style),
+            ]]
+            
+            for _, row in df_causales_imp.iterrows():
+                causal_imp_data.append([
+                    Paragraph(str(row['causal']), body_style),
+                    Paragraph(f"{int(row['cantidad']):,}", body_style),
+                    Paragraph(f"{row['porcentaje']:.1f}%", body_style),
+                ])
+            
+            causal_imp_table = Table(causal_imp_data, colWidths=[4*inch, 1.2*inch, 1.2*inch])
+            causal_imp_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3B82F6')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F8FAFC')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#E2E8F0')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F1F5F9')]),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+            
+            elements.append(causal_imp_table)
+            elements.append(Spacer(1, 15))
+        
+        # =========================================================================
+        # TOP CAUSALES DE AHORRO
         # =========================================================================
         if 'CAUSAL' in df.columns:
             elements.append(Paragraph("🔍 Top 10 Causales de Ahorro", heading_style))
@@ -419,6 +969,44 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
             elements.append(Spacer(1, 15))
     
     # =========================================================================
+    # FILTROS APLICADOS A GRÁFICOS
+    # =========================================================================
+    if filtros_graficos and any(v for v in filtros_graficos.values()):
+        elements.append(Paragraph("⚙️ Filtros Aplicados a Gráficos", heading_style))
+        
+        filtros_graf_data = [[
+            Paragraph("<b>Gráfico</b>", body_style),
+            Paragraph("<b>Filtros</b>", body_style),
+        ]]
+        
+        for grafico, filtros in filtros_graficos.items():
+            if filtros:
+                filtros_str = ", ".join([f"{k}: {v}" for k, v in filtros.items() if v])
+                if filtros_str:
+                    filtros_graf_data.append([
+                        Paragraph(str(grafico), body_style),
+                        Paragraph(filtros_str, body_style),
+                    ])
+        
+        if len(filtros_graf_data) > 1:
+            filtros_graf_table = Table(filtros_graf_data, colWidths=[2*inch, 4.5*inch])
+            filtros_graf_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3B82F6')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F8FAFC')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#E2E8F0')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F1F5F9')]),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+            
+            elements.append(filtros_graf_table)
+            elements.append(Spacer(1, 15))
+    
+    # =========================================================================
     # FOOTER
     # =========================================================================
     elements.append(Spacer(1, 30))
@@ -440,7 +1028,6 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
         fontName='Helvetica'
     )
     
-    elements.append(Paragraph(f"{taller_nombre} v2.0 | Desarrollado para RENOMOTRIZ", footer_style))
     elements.append(Paragraph(
         f"Reporte generado el {datetime.now().strftime('%d/%m/%Y a las %H:%M')}", 
         footer_style

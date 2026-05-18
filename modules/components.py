@@ -140,6 +140,56 @@ def render_data_info(df, df_filtered):
         st.info(f"📊 Mostrando {len(df_filtered)} de {len(df)} registros (filtros aplicados)")
 
 
+def _capturar_filtros_graficos():
+    """Captura los filtros aplicados a gráficos desde st.session_state."""
+    filtros_graficos = {}
+    
+    # 1. Filtros de Top Causales de Ahorro
+    try:
+        tipo_periodo = st.session_state.get("top_causales_tipo_periodo")
+        if tipo_periodo:
+            periodo_key = f"top_causales_periodo_{tipo_periodo}"
+            periodo_val = st.session_state.get(periodo_key)
+            filtros_graficos["Top Causales de Ahorro"] = {
+                "Tipo de período": tipo_periodo,
+                "Período": periodo_val,
+                "Causal": st.session_state.get("top_causales_causal") or "Todos",
+                "Acción": st.session_state.get("top_causales_accion") or "Todos",
+            }
+    except Exception:
+        pass
+    
+    # 2. Filtros de Imprevistos con Cambio de Repuesto (Culpa del Taller)
+    try:
+        año_culpa = st.session_state.get("culpa_taller_año")
+        mes_culpa = st.session_state.get("culpa_taller_mes_reporte")
+        if año_culpa is not None or mes_culpa is not None:
+            filtros_graficos["Imprevistos con Cambio de Repuesto"] = {
+                "Año": año_culpa,
+                "Mes": mes_culpa,
+            }
+    except Exception:
+        pass
+    
+    # 3. Filtros de Demora en Definición del Imprevisto
+    try:
+        cia_dem = st.session_state.get("demora_definicion_cia")
+        año_dem = st.session_state.get("demora_definicion_año")
+        trim_dem = st.session_state.get("demora_definicion_trimestre")
+        mes_dem = st.session_state.get("demora_definicion_mes")
+        if any(v is not None and v != "Todos" for v in [cia_dem, año_dem, trim_dem, mes_dem]):
+            filtros_graficos["Demora en Definición del Imprevisto"] = {
+                "CIA": cia_dem,
+                "Año": año_dem,
+                "Trimestre": trim_dem,
+                "Mes": mes_dem,
+            }
+    except Exception:
+        pass
+    
+    return filtros_graficos
+
+
 def render_export_section(df_filtered, filtros, talleres_seleccionados=None):
     """Sección de exportación de datos"""
     from .exporters import generate_excel_report, generate_csv_export, generate_pdf_report
@@ -185,7 +235,13 @@ def render_export_section(df_filtered, filtros, talleres_seleccionados=None):
 
     # Generar PDF
     with col_exp3:
-        pdf_buffer = generate_pdf_report(df_filtered, filtros, include_honorarios=include_honorarios, taller_nombre=taller_nombre)
+        filtros_graficos = _capturar_filtros_graficos()
+        pdf_buffer = generate_pdf_report(
+            df_filtered, filtros,
+            include_honorarios=include_honorarios,
+            taller_nombre=taller_nombre,
+            filtros_graficos=filtros_graficos
+        )
         honorarios_text = "con" if include_honorarios else "sin"
         st.download_button(
             label=f"📑 Descargar PDF ({honorarios_text} honorarios)",
