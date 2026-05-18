@@ -150,9 +150,19 @@ def _capturar_filtros_graficos():
         if tipo_periodo:
             periodo_key = f"top_causales_periodo_{tipo_periodo}"
             periodo_val = st.session_state.get(periodo_key)
+            # periodo_val ahora puede ser una lista (multiselect)
+            if isinstance(periodo_val, list):
+                if len(periodo_val) == 0:
+                    periodo_display = "Todos"
+                elif len(periodo_val) == 1:
+                    periodo_display = periodo_val[0]
+                else:
+                    periodo_display = f"{len(periodo_val)} seleccionados"
+            else:
+                periodo_display = periodo_val or "Todos"
             filtros_graficos["Top Causales de Ahorro"] = {
                 "Tipo de período": tipo_periodo,
-                "Período": periodo_val,
+                "Período": periodo_display,
                 "Causal": st.session_state.get("top_causales_causal") or "Todos",
                 "Acción": st.session_state.get("top_causales_accion") or "Todos",
             }

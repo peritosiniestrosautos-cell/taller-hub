@@ -44,6 +44,55 @@ class VisualizationsTests(unittest.TestCase):
         self.assertEqual(trimestre["DIFERENCIA"].sum(), 300)
         self.assertEqual(anio["DIFERENCIA"].sum(), 600)
 
+    def test_filtrar_top_causales_por_multiples_anios(self):
+        df = pd.DataFrame(
+            [
+                {"AÑO": 2026, "MES": 1, "CAUSAL": "NO COTIZADO", "DIFERENCIA": 100},
+                {"AÑO": 2026, "MES": 2, "CAUSAL": "PREDESARME", "DIFERENCIA": 200},
+                {"AÑO": 2025, "MES": 1, "CAUSAL": "DIGITACION", "DIFERENCIA": 300},
+                {"AÑO": 2024, "MES": 3, "CAUSAL": "NO COTIZADO", "DIFERENCIA": 400},
+            ]
+        )
+
+        # Múltiples años
+        multi_anio = visualizations._filtrar_df_causales_por_periodo(df, "Año", ["2026", "2024"])
+        self.assertEqual(multi_anio["DIFERENCIA"].sum(), 700)
+        self.assertEqual(len(multi_anio), 3)
+
+        # Un solo año (lista con un elemento)
+        single_anio = visualizations._filtrar_df_causales_por_periodo(df, "Año", ["2025"])
+        self.assertEqual(single_anio["DIFERENCIA"].sum(), 300)
+
+        # Múltiples meses
+        multi_mes = visualizations._filtrar_df_causales_por_periodo(df, "Mes", ["2026-01", "2025-01"])
+        self.assertEqual(multi_mes["DIFERENCIA"].sum(), 400)
+        self.assertEqual(len(multi_mes), 2)
+
+        # Múltiples trimestres
+        multi_trim = visualizations._filtrar_df_causales_por_periodo(df, "Trimestre", ["2026-T1", "2024-T1"])
+        self.assertEqual(multi_trim["DIFERENCIA"].sum(), 700)
+
+    def test_period_label_from_key_con_multiples_periodos(self):
+        # Hasta 3 labels se muestran completos
+        label_tres = visualizations._period_label_from_key("Año", ["2026", "2025", "2024"])
+        self.assertEqual(label_tres, "Año 2026, Año 2025, Año 2024")
+
+        # Dos años
+        label_dos = visualizations._period_label_from_key("Año", ["2026", "2025"])
+        self.assertEqual(label_dos, "Año 2026, Año 2025")
+
+        # Un solo año
+        label_uno = visualizations._period_label_from_key("Año", ["2026"])
+        self.assertEqual(label_uno, "Año 2026")
+
+        # Año como string simple (backward compat)
+        label_str = visualizations._period_label_from_key("Año", "2026")
+        self.assertEqual(label_str, "Año 2026")
+
+        # Más de 3 se resumen
+        label_cuatro = visualizations._period_label_from_key("Año", ["2026", "2025", "2024", "2023"])
+        self.assertEqual(label_cuatro, "Año 2026, Año 2025 y 2 más")
+
     def test_preparar_reporte_top_causales_incluye_resumen_y_detalle(self):
         df = pd.DataFrame(
             [

@@ -309,10 +309,21 @@ def render_grafico_ahorro_mes(df):
 # GRÁFICO DE CAUSALES
 # ============================================================================
 
-def _filtrar_df_causales_por_periodo(df, tipo_periodo, periodo):
-    """Filtra el DataFrame por Mes, Trimestre o Año usando columnas AÑO/MES."""
+def _filtrar_df_causales_por_periodo(df, tipo_periodo, periodos):
+    """Filtra el DataFrame por Mes, Trimestre o Año usando columnas AÑO/MES.
+
+    periodos puede ser un solo valor o una lista de valores.
+    """
     if df is None or df.empty or 'AÑO' not in df.columns or 'MES' not in df.columns:
         return pd.DataFrame(columns=df.columns if df is not None else None)
+
+    # Normalizar a lista
+    if periodos is None:
+        periodos = []
+    if not isinstance(periodos, list):
+        periodos = [periodos]
+    if not periodos:
+        return df.copy()
 
     df_periodo = df.copy()
     df_periodo['_AÑO'] = pd.to_numeric(df_periodo['AÑO'], errors='coerce')
@@ -331,23 +342,36 @@ def _filtrar_df_causales_por_periodo(df, tipo_periodo, periodo):
     df_periodo['_AÑO'] = df_periodo['_AÑO'].astype(int)
     df_periodo['_MES'] = df_periodo['_MES'].astype(int)
 
-    if tipo_periodo == "Mes":
-        try:
-            anio, mes = str(periodo).split("-")
-            mask = (df_periodo['_AÑO'] == int(anio)) & (df_periodo['_MES'] == int(mes))
-        except ValueError:
-            mask = pd.Series(False, index=df_periodo.index)
-    elif tipo_periodo == "Trimestre":
-        try:
-            anio, trimestre = str(periodo).split("-T")
-            trimestre = int(trimestre)
-            mes_inicio = (trimestre - 1) * 3 + 1
-            meses = {mes_inicio, mes_inicio + 1, mes_inicio + 2}
-            mask = (df_periodo['_AÑO'] == int(anio)) & (df_periodo['_MES'].isin(meses))
-        except ValueError:
-            mask = pd.Series(False, index=df_periodo.index)
-    elif tipo_periodo == "Año":
-        mask = df_periodo['_AÑO'] == int(periodo)
+    masks = []
+    for periodo in periodos:
+        if tipo_periodo == "Mes":
+            try:
+                anio, mes = str(periodo).split("-")
+                masks.append(
+                    (df_periodo['_AÑO'] == int(anio)) & (df_periodo['_MES'] == int(mes))
+                )
+            except ValueError:
+                masks.append(pd.Series(False, index=df_periodo.index))
+        elif tipo_periodo == "Trimestre":
+            try:
+                anio, trimestre = str(periodo).split("-T")
+                trimestre = int(trimestre)
+                mes_inicio = (trimestre - 1) * 3 + 1
+                meses = {mes_inicio, mes_inicio + 1, mes_inicio + 2}
+                masks.append(
+                    (df_periodo['_AÑO'] == int(anio)) & (df_periodo['_MES'].isin(meses))
+                )
+            except ValueError:
+                masks.append(pd.Series(False, index=df_periodo.index))
+        elif tipo_periodo == "Año":
+            masks.append(df_periodo['_AÑO'] == int(periodo))
+        else:
+            masks.append(pd.Series(True, index=df_periodo.index))
+
+    if masks:
+        mask = masks[0]
+        for m in masks[1:]:
+            mask = mask | m
     else:
         mask = pd.Series(True, index=df_periodo.index)
 
@@ -437,16 +461,33 @@ def _generar_excel_reporte_top_causales(resumen, detalle):
     return output.getvalue()
 
 
-def _period_label_from_key(tipo_periodo, periodo):
-    if tipo_periodo == "Mes":
-        anio, mes = str(periodo).split("-")
-        return f"Mes {int(mes):02d}/{int(anio)}"
-    if tipo_periodo == "Trimestre":
-        anio, trimestre = str(periodo).split("-T")
-        return f"Trimestre T{trimestre}/{anio}"
-    if tipo_periodo == "Año":
-        return f"Año {periodo}"
-    return "Todos los periodos"
+def _period_label_from_key(tipo_periodo, periodos):
+    """Genera una etiqueta legible para uno o varios periodos."""
+    if periodos is None:
+        return "Todos los periodos"
+    if not isinstance(periodos, list):
+        periodos = [periodos]
+    if not periodos:
+        return "Todos los periodos"
+
+    labels = []
+    for periodo in periodos:
+        if tipo_periodo == "Mes":
+            anio, mes = str(periodo).split("-")
+            labels.append(f"Mes {int(mes):02d}/{int(anio)}")
+        elif tipo_periodo == "Trimestre":
+            anio, trimestre = str(periodo).split("-T")
+            labels.append(f"Trimestre T{trimestre}/{anio}")
+        elif tipo_periodo == "Año":
+            labels.append(f"Año {periodo}")
+        else:
+            labels.append(str(periodo))
+
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) <= 3:
+        return ", ".join(labels)
+    return f"{labels[0]}, {labels[1]} y {len(labels) - 2} más"
 
 
 def render_grafico_causales(df):
@@ -519,9 +560,10 @@ def render_grafico_causales(df):
         format_func = lambda value: _period_label_from_key("Año", value)
 
     with filtro_col2:
-        periodo_sel = st.selectbox(
+        periodo_sel = st.multiselect(
             "Seleccionar periodo",
             options=period_options,
+            default=period_options[:1] if period_options else [],
             format_func=format_func,
             key=f"top_causales_periodo_{tipo_periodo}",
         )
@@ -577,6 +619,14 @@ def render_grafico_causales(df):
     )
     excel_reporte = _generar_excel_reporte_top_causales(resumen_reporte, detalle_reporte)
 
+    # Construir nombre de archivo seguro para múltiples periodos
+    if isinstance(periodo_sel, list) and len(periodo_sel) > 0:
+        archivo_periodo = "_".join(str(p) for p in periodo_sel)
+        if len(archivo_periodo) > 50:
+            archivo_periodo = f"{periodo_sel[0]}_y_{len(periodo_sel)-1}_mas"
+    else:
+        archivo_periodo = str(periodo_sel) if periodo_sel else "todos"
+
     title_col, action_col = st.columns([3, 2])
     with title_col:
         st.subheader("📊 Top Causales de Cambio por Valor de Ahorro")
@@ -584,7 +634,7 @@ def render_grafico_causales(df):
         st.download_button(
             label="📥 Descargar reporte",
             data=excel_reporte,
-            file_name=f"top_causales_ahorro_{periodo_sel}.xlsx",
+            file_name=f"top_causales_ahorro_{archivo_periodo}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             disabled=resumen_reporte.empty and detalle_reporte.empty,
             help="Incluye hojas RESUMEN POR CAUSAL y DETALLE para el periodo seleccionado.",
