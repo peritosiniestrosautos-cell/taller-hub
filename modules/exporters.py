@@ -328,7 +328,7 @@ def _calcular_comparativo_ahorro_pdf(df):
     trimestral = trimestral[trimestral['DIFERENCIA'] > 0].reset_index(drop=True)
 
     if len(trimestral) < 2:
-        return resumen, trimestral
+        return resumen, pd.DataFrame()
 
     # Para cada trimestre, buscar el mismo trimestre del año anterior
     def _comparar_trimestre_homologo(row):

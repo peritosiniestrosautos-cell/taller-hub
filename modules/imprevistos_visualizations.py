@@ -655,7 +655,7 @@ CAUSALES_CULPA_TALLER = {
 }
 
 
-def _calcular_tasa_culpa_taller_cambio(df: pd.DataFrame) -> pd.DataFrame:
+def _calcular_tasa_culpa_taller_cambio(df: pd.DataFrame, años=None, meses=None) -> pd.DataFrame:
     """
     Calcula la tasa mensual de imprevistos con cambio de repuesto que son culpa del taller.
 
@@ -665,6 +665,10 @@ def _calcular_tasa_culpa_taller_cambio(df: pd.DataFrame) -> pd.DataFrame:
     3. No deduplicar placas/siniestros: cada registro válido cuenta
     4. Rate = culpa_taller / total_registros_validos * 100
        Culpa del taller: CAUSAL en {no cotizado, predesarme, digitación, sin fotos claras, sin diagnóstico}
+
+    Parámetros opcionales:
+        años: lista de años a filtrar (ej: [2024, 2025]). Si es None, incluye todos.
+        meses: lista de meses a filtrar (ej: [1, 2, 3]). Si es None, incluye todos.
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -720,6 +724,15 @@ def _calcular_tasa_culpa_taller_cambio(df: pd.DataFrame) -> pd.DataFrame:
     df_cambio['_AÑO'] = df_cambio['_AÑO'].astype(int)
     df_cambio['_MES'] = df_cambio['_MES'].astype(int)
 
+    # Aplicar filtros de período si se proporcionan
+    if años is not None and len(años) > 0:
+        df_cambio = df_cambio[df_cambio['_AÑO'].isin(años)].copy()
+    if meses is not None and len(meses) > 0:
+        df_cambio = df_cambio[df_cambio['_MES'].isin(meses)].copy()
+
+    if df_cambio.empty:
+        return pd.DataFrame()
+
     # Step 3: no deduplicar. Cada registro válido cuenta en el gráfico.
     df_cambio['_CULPA'] = df_cambio['_CAUSAL'].isin(CAUSALES_CULPA_TALLER)
     
@@ -735,15 +748,28 @@ def _calcular_tasa_culpa_taller_cambio(df: pd.DataFrame) -> pd.DataFrame:
         format='%Y-%m-%d', errors='coerce'
     )
     resumen = resumen[resumen['FECHA'].notna()].sort_values('FECHA').reset_index(drop=True)
-    resumen['mes_label'] = resumen['FECHA'].dt.strftime('%b').str.upper()
+
+    # Meses en español para el eje X
+    MESES_ES = {
+        1: "ENE", 2: "FEB", 3: "MAR", 4: "ABR",
+        5: "MAY", 6: "JUN", 7: "JUL", 8: "AGO",
+        9: "SEP", 10: "OCT", 11: "NOV", 12: "DIC"
+    }
+    resumen['mes_label'] = resumen['_MES'].map(MESES_ES)
     resumen.rename(columns={'_AÑO': 'año', '_MES': 'mes'}, inplace=True)
 
     return resumen
 
 
-def _preparar_reporte_cambio_repuesto_mes(df: pd.DataFrame, año: int, mes: int) -> pd.DataFrame:
+def _preparar_reporte_cambio_repuesto_mes(df: pd.DataFrame, año=None, mes=None, años=None, meses=None) -> pd.DataFrame:
     """
-    Prepara el detalle descargable de imprevistos con cambio para un mes.
+    Prepara el detalle descargable de imprevistos con cambio para un período.
+
+    Parámetros:
+        año: int o None. Año específico (modo legacy).
+        mes: int o None. Mes específico (modo legacy).
+        años: list o None. Lista de años a filtrar.
+        meses: list o None. Lista de meses a filtrar.
     """
     columnas_reporte = ["PLACA", "LINEA", "CIA", "IMPREVISTO", "CAUSAL"]
 
@@ -759,11 +785,21 @@ def _preparar_reporte_cambio_repuesto_mes(df: pd.DataFrame, año: int, mes: int)
     df_w["_MES"] = pd.to_numeric(df_w["MES"], errors="coerce")
     df_w["_ACCION"] = df_w["ACCION"].astype(str).str.upper().str.strip()
 
-    df_w = df_w[
-        df_w["_ACCION"].str.contains("CAMBIO", na=False)
-        & (df_w["_AÑO"] == int(año))
-        & (df_w["_MES"] == int(mes))
-    ].copy()
+    mask = df_w["_ACCION"].str.contains("CAMBIO", na=False)
+
+    # Modo legacy: año y mes individuales
+    if año is not None:
+        mask = mask & (df_w["_AÑO"] == int(año))
+    if mes is not None:
+        mask = mask & (df_w["_MES"] == int(mes))
+
+    # Modo nuevo: listas de años y meses
+    if años is not None and len(años) > 0:
+        mask = mask & (df_w["_AÑO"].isin(años))
+    if meses is not None and len(meses) > 0:
+        mask = mask & (df_w["_MES"].isin(meses))
+
+    df_w = df_w[mask].copy()
 
     if df_w.empty:
         return pd.DataFrame(columns=columnas_reporte)
@@ -857,6 +893,7 @@ def _preparar_reporte_cambio_repuesto_total(df: pd.DataFrame) -> pd.DataFrame:
 def render_grafico_culpa_taller_mensual(df=None):
     """
     Gráfico de línea: tasa mensual de imprevistos con cambio de repuesto (culpa del taller).
+    Soporta filtros por año, trimestre y mes (incluyendo combinaciones de varios períodos).
     Estilo consistente con el resto del dashboard.
     """
     import datetime
@@ -866,46 +903,45 @@ def render_grafico_culpa_taller_mensual(df=None):
         st.info("No hay datos disponibles.")
         return
 
-    resumen = _calcular_tasa_culpa_taller_cambio(df)
-
-    if resumen.empty:
-        st.subheader("🔧 Imprevistos con Cambio de Repuesto")
-        st.info("No se encontraron imprevistos con ACCION=CAMBIO y mano de obra registrada.")
-        return
-
     header_container = st.container()
 
-    años_disponibles = sorted(resumen['año'].unique().tolist(), reverse=True)
-    año_actual = datetime.datetime.now().year
-    default_idx = años_disponibles.index(año_actual) if año_actual in años_disponibles else 0
-    col_anio, col_mes = st.columns(2)
-    with col_anio:
-        año_sel = st.selectbox(
-            "Año",
-            options=años_disponibles,
-            index=default_idx,
-            key="culpa_taller_año"
-        )
-    resumen = resumen[resumen['año'] == año_sel].copy()
+    # --- Filtros de período reutilizables ---
+    años_sel, trimestres_sel, meses_sel, meses_filtro = _render_filtros_periodo_imprevistos(
+        df, key_suffix="culpa_taller"
+    )
+
+    # Calcular resumen con filtros aplicados
+    resumen = _calcular_tasa_culpa_taller_cambio(
+        df,
+        años=años_sel if años_sel else None,
+        meses=meses_filtro if meses_filtro else None
+    )
 
     if resumen.empty:
-        st.info(f"No hay datos para el año {año_sel}.")
+        with header_container:
+            st.subheader("🔧 Imprevistos con Cambio de Repuesto")
+        st.info("No se encontraron imprevistos con ACCION=CAMBIO para el período seleccionado.")
         return
 
-    meses_disponibles = resumen[["mes", "mes_label"]].drop_duplicates().sort_values("mes")
-    mes_options = meses_disponibles["mes"].astype(int).tolist()
-    mes_labels = dict(zip(mes_options, meses_disponibles["mes_label"].tolist()))
-    with col_mes:
-        mes_sel = st.selectbox(
-            "Mes del reporte",
-            options=mes_options,
-            format_func=lambda value: mes_labels.get(value, str(value)),
-            index=len(mes_options) - 1,
-            key="culpa_taller_mes_reporte",
-        )
-
-    reporte = _preparar_reporte_cambio_repuesto_mes(df, año=año_sel, mes=mes_sel)
+    # Preparar reporte descargable con los mismos filtros
+    reporte = _preparar_reporte_cambio_repuesto_mes(
+        df,
+        años=años_sel if años_sel else None,
+        meses=meses_filtro if meses_filtro else None
+    )
     csv_reporte = reporte.to_csv(index=False).encode("utf-8-sig")
+
+    # Construir nombre de archivo según el período
+    if len(años_sel) == 1:
+        if len(meses_filtro) == 1:
+            file_name = f"imprevistos_cambio_repuesto_{años_sel[0]}_{meses_filtro[0]:02d}.csv"
+        else:
+            meses_str = "-".join(f"{m:02d}" for m in sorted(meses_filtro))
+            file_name = f"imprevistos_cambio_repuesto_{años_sel[0]}_meses_{meses_str}.csv"
+    else:
+        años_str = "-".join(str(a) for a in sorted(años_sel))
+        meses_str = "-".join(f"{m:02d}" for m in sorted(meses_filtro))
+        file_name = f"imprevistos_cambio_repuesto_años_{años_str}_meses_{meses_str}.csv"
 
     with header_container:
         title_col, action_col = st.columns([3, 2])
@@ -915,36 +951,65 @@ def render_grafico_culpa_taller_mensual(df=None):
             st.download_button(
                 label="📥 Descargar reporte",
                 data=csv_reporte,
-                file_name=f"imprevistos_cambio_repuesto_{año_sel}_{int(mes_sel):02d}.csv",
+                file_name=file_name,
                 mime="text/csv",
                 disabled=reporte.empty,
-                help="Descarga PLACA, CIA, IMPREVISTO y CAUSAL para el mes seleccionado.",
+                help="Descarga PLACA, CIA, IMPREVISTO y CAUSAL para el período seleccionado.",
                 use_container_width=True,
             )
 
+    # Paleta de colores para múltiples años
+    AÑO_COLORES = [
+        BrandColors.PRIMARY,
+        BrandColors.ACCENT,
+        BrandColors.SECONDARY,
+        BrandColors.TEAL,
+        BrandColors.INDIGO,
+        BrandColors.CYAN_LIGHT,
+    ]
+
+    # Orden cronológico del eje X basado en los meses presentes
+    orden_meses = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN",
+                   "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]
+    meses_presentes = resumen[['mes', 'mes_label']].drop_duplicates().sort_values('mes')
+    category_array = meses_presentes['mes_label'].tolist()
+    # Asegurar que estén en orden cronológico según el mapeo estándar
+    category_array = [m for m in orden_meses if m in category_array]
+
     fig = go.Figure()
 
-    fig.add_trace(go.Scatter(
-        x=resumen['mes_label'],
-        y=resumen['culpa_taller'],
-        mode='lines+markers+text',
-        line=dict(color=BrandColors.PRIMARY, width=3),
-        marker=dict(size=10, color=BrandColors.SECONDARY, line=dict(width=2, color='white')),
-        text=resumen['culpa_taller'].astype(int).astype(str),
-        textposition='top center',
-        textfont=dict(size=12, color=BrandColors.PRIMARY),
-        hovertemplate='%{x}: %{y} imprevistos<extra></extra>',
-        name='Con causal de proceso'
-    ))
+    años_unicos = sorted(resumen['año'].unique().tolist())
+    mostrar_leyenda = len(años_unicos) > 1
+
+    for idx, año in enumerate(años_unicos):
+        df_año = resumen[resumen['año'] == año].copy()
+        color = AÑO_COLORES[idx % len(AÑO_COLORES)]
+
+        fig.add_trace(go.Scatter(
+            x=df_año['mes_label'],
+            y=df_año['culpa_taller'],
+            mode='lines+markers+text',
+            line=dict(color=color, width=3),
+            marker=dict(size=10, color=color, line=dict(width=2, color='white')),
+            text=df_año['culpa_taller'].astype(int).astype(str),
+            textposition='top center',
+            textfont=dict(size=12, color=color),
+            hovertemplate=f'Año {año} - %{{x}}: %{{y}} imprevistos<extra></extra>',
+            name=str(año)
+        ))
 
     fig.update_layout(
         **get_plotly_theme(
             title='🔧 Imprevistos con Cambio de Repuesto',
             height=ChartHeights.MEDIUM,
-            show_legend=False
+            show_legend=mostrar_leyenda
         )
     )
-    fig.update_xaxes(title_text='Mes')
+    fig.update_xaxes(
+        title_text='Mes',
+        categoryorder='array',
+        categoryarray=category_array
+    )
     fig.update_yaxes(title_text='Cantidad')
     fig.update_layout(margin=dict(l=50, r=30, t=60, b=50))
 

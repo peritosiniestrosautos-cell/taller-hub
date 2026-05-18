@@ -171,12 +171,21 @@ def _capturar_filtros_graficos():
     
     # 2. Filtros de Imprevistos con Cambio de Repuesto (Culpa del Taller)
     try:
-        año_culpa = st.session_state.get("culpa_taller_año")
-        mes_culpa = st.session_state.get("culpa_taller_mes_reporte")
-        if año_culpa is not None or mes_culpa is not None:
+        años_culpa = st.session_state.get("imp_filtro_años_culpa_taller")
+        trim_culpa = st.session_state.get("imp_filtro_trimestres_culpa_taller")
+        meses_culpa = st.session_state.get("imp_filtro_meses_culpa_taller")
+        if años_culpa is not None or trim_culpa is not None or meses_culpa is not None:
+            def _fmt_list(val, label):
+                if not val:
+                    return "Todos"
+                if len(val) == 1:
+                    return str(val[0])
+                return f"{len(val)} {label}"
+
             filtros_graficos["Imprevistos con Cambio de Repuesto"] = {
-                "Año": año_culpa,
-                "Mes": mes_culpa,
+                "Años": _fmt_list(años_culpa, "años"),
+                "Trimestres": _fmt_list(trim_culpa, "trimestres"),
+                "Meses": _fmt_list(meses_culpa, "meses"),
             }
     except Exception:
         pass
@@ -284,6 +293,58 @@ def _capturar_filtros_graficos():
     return filtros_graficos
 
 
+def _aplicar_filtro_periodo_pdf(df, tipo_periodo, año_sel, trimestre_sel, mes_sel):
+    """
+    Aplica filtro de período al DataFrame para el reporte PDF.
+    Retorna el DataFrame filtrado y un texto descriptivo del período.
+    """
+    if df is None or df.empty:
+        return df, ""
+
+    df_out = df.copy()
+    periodo_texto = ""
+
+    MESES_ES = {
+        1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+        5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+        9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+    }
+
+    if tipo_periodo == "Todo un año" and año_sel:
+        df_out = df_out[df_out['AÑO'] == int(año_sel)]
+        periodo_texto = f"Año_{año_sel}"
+
+    elif tipo_periodo == "Un trimestre" and año_sel and trimestre_sel:
+        trimestre_map = {"Q1": (1, 3), "Q2": (4, 6), "Q3": (7, 9), "Q4": (10, 12)}
+        mes_inicio, mes_fin = trimestre_map[trimestre_sel]
+        df_out = df_out[
+            (df_out['AÑO'] == int(año_sel)) &
+            (df_out['MES'] >= mes_inicio) &
+            (df_out['MES'] <= mes_fin)
+        ]
+        periodo_texto = f"{trimestre_sel}_{año_sel}"
+
+    elif tipo_periodo == "Un mes" and año_sel and mes_sel:
+        df_out = df_out[
+            (df_out['AÑO'] == int(año_sel)) &
+            (df_out['MES'] == int(mes_sel))
+        ]
+        periodo_texto = f"{MESES_ES.get(int(mes_sel), mes_sel)}_{año_sel}"
+
+    elif tipo_periodo == "Acumulado hasta un mes" and año_sel and mes_sel:
+        # Incluye todos los registros desde el inicio hasta el mes/año seleccionado inclusive
+        df_out = df_out[
+            (df_out['AÑO'] < int(año_sel)) |
+            (
+                (df_out['AÑO'] == int(año_sel)) &
+                (df_out['MES'] <= int(mes_sel))
+            )
+        ]
+        periodo_texto = f"Acumulado_hasta_{MESES_ES.get(int(mes_sel), mes_sel)}_{año_sel}"
+
+    return df_out, periodo_texto
+
+
 def render_export_section(df_filtered, filtros, talleres_seleccionados=None):
     """Sección de exportación de datos"""
     from .exporters import generate_excel_report, generate_csv_export, generate_pdf_report
@@ -295,6 +356,72 @@ def render_export_section(df_filtered, filtros, talleres_seleccionados=None):
     taller_nombre = _get_taller_display_name(talleres_seleccionados or [])
     taller_slug = taller_nombre.lower().replace(" ", "_").replace("|", "_")
 
+    # =========================================================================
+    # CONFIGURACIÓN DE PERÍODO PARA PDF
+    # =========================================================================
+    st.subheader("📅 Período para el Reporte PDF")
+
+    tipo_periodo_pdf = st.selectbox(
+        "Selecciona el período a graficar en el PDF:",
+        options=[
+            "Usar filtros actuales del dashboard",
+            "Todo un año",
+            "Un trimestre",
+            "Un mes",
+            "Acumulado hasta un mes"
+        ],
+        help="'Acumulado hasta un mes' incluye todos los datos desde el inicio hasta el mes seleccionado. Es ideal para reportes de gestión."
+    )
+
+    # Widgets dinámicos según selección
+    años_disponibles = []
+    if df_filtered is not None and 'AÑO' in df_filtered.columns:
+        años_disponibles = sorted(
+            [int(a) for a in df_filtered['AÑO'].dropna().unique() if a > 0],
+            reverse=True
+        )
+
+    año_sel = None
+    trimestre_sel = None
+    mes_sel = None
+
+    if tipo_periodo_pdf in ("Todo un año", "Un trimestre", "Un mes", "Acumulado hasta un mes"):
+        cols_periodo = st.columns(3)
+
+        with cols_periodo[0]:
+            año_sel = st.selectbox(
+                "Año",
+                options=años_disponibles if años_disponibles else [datetime.now().year],
+                key="pdf_periodo_año"
+            )
+
+        if tipo_periodo_pdf == "Un trimestre":
+            with cols_periodo[1]:
+                trimestre_sel = st.selectbox(
+                    "Trimestre",
+                    options=["Q1", "Q2", "Q3", "Q4"],
+                    key="pdf_periodo_trimestre"
+                )
+
+        if tipo_periodo_pdf in ("Un mes", "Acumulado hasta un mes"):
+            with cols_periodo[1]:
+                _MESES_ES = {
+                    1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+                    5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+                    9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+                }
+                meses_options = list(range(1, 13))
+                mes_sel = st.selectbox(
+                    "Mes",
+                    options=meses_options,
+                    format_func=lambda m: _MESES_ES.get(int(m), str(m)),
+                    key="pdf_periodo_mes"
+                )
+
+    # Mostrar etiqueta descriptiva del período seleccionado
+    if tipo_periodo_pdf == "Acumulado hasta un mes":
+        st.info("ℹ️ El PDF incluirá **todos los datos acumulados hasta el mes seleccionado**. Ideal para ver la evolución completa de la gestión.")
+
     # Toggle para incluir honorarios en PDF
     fee_config = load_fee_config()
     include_honorarios = st.toggle(
@@ -302,6 +429,15 @@ def render_export_section(df_filtered, filtros, talleres_seleccionados=None):
         value=not fee_config.get('hide_fees_presentation', False),
         help="Activa/desactiva la inclusión de datos de honorarios en el PDF exportado"
     )
+
+    # Preparar DataFrame para PDF según el período seleccionado
+    df_pdf, periodo_texto = _aplicar_filtro_periodo_pdf(
+        df_filtered, tipo_periodo_pdf, año_sel, trimestre_sel, mes_sel
+    )
+
+    # Si no hay datos después del filtro, mostrar advertencia
+    if df_pdf is None or df_pdf.empty:
+        st.warning("⚠️ No hay datos para el período seleccionado. El PDF no se generará.")
 
     col_exp1, col_exp2, col_exp3 = st.columns(3)
 
@@ -330,17 +466,30 @@ def render_export_section(df_filtered, filtros, talleres_seleccionados=None):
     # Generar PDF
     with col_exp3:
         filtros_graficos = _capturar_filtros_graficos()
+
+        # Fusionar los filtros del período del PDF con los filtros del dashboard
+        filtros_pdf = dict(filtros) if filtros else {}
+        if periodo_texto:
+            filtros_pdf["Período PDF"] = periodo_texto.replace("_", " ")
+
         pdf_buffer = generate_pdf_report(
-            df_filtered, filtros,
+            df_pdf, filtros_pdf,
             include_honorarios=include_honorarios,
             taller_nombre=taller_nombre,
             filtros_graficos=filtros_graficos
         )
         honorarios_text = "con" if include_honorarios else "sin"
+
+        # Incluir período en el nombre del archivo
+        if periodo_texto:
+            file_suffix = f"{periodo_texto}_{honorarios_text}_honorarios"
+        else:
+            file_suffix = f"{honorarios_text}_honorarios"
+
         st.download_button(
             label=f"📑 Descargar PDF ({honorarios_text} honorarios)",
             data=pdf_buffer,
-            file_name=f"{taller_slug}_dashboard_{honorarios_text}_honorarios_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+            file_name=f"{taller_slug}_dashboard_{file_suffix}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
             mime="application/pdf",
             width='stretch'
         )

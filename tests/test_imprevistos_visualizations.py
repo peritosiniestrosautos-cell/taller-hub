@@ -3,6 +3,7 @@ import unittest
 import pandas as pd
 
 from modules.imprevistos_visualizations import (
+    _calcular_tasa_culpa_taller_cambio,
     _filtrar_demora_definicion_por_periodo_y_cia,
     _format_month_year_label,
     _preparar_reporte_cambio_repuesto_mes,
@@ -155,6 +156,59 @@ class ImprevistosVisualizationsTests(unittest.TestCase):
             set(zip(resumen["ESTATUS"].tolist(), resumen["PROMEDIO_DEMORA_DIAS"].tolist())),
             {("AUTORIZADO", 3.0), ("RECHAZADO", 5.0)},
         )
+
+
+    def test_calcular_tasa_culpa_taller_sin_filtros(self):
+        df = pd.DataFrame(
+            [
+                {"PLACA": "AAA111", "ACCION": "CAMBIO", "AÑO": 2025, "MES": 1, "CAUSAL": "NO COTIZADO"},
+                {"PLACA": "BBB222", "ACCION": "CAMBIO", "AÑO": 2025, "MES": 1, "CAUSAL": "AJUSTE"},
+                {"PLACA": "CCC333", "ACCION": "CAMBIO", "AÑO": 2025, "MES": 2, "CAUSAL": "PREDESARME"},
+            ]
+        )
+        result = _calcular_tasa_culpa_taller_cambio(df)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result["culpa_taller"].sum(), 2)
+        self.assertEqual(result["total"].sum(), 3)
+
+    def test_calcular_tasa_culpa_taller_filtra_por_anio_y_mes(self):
+        df = pd.DataFrame(
+            [
+                {"PLACA": "AAA111", "ACCION": "CAMBIO", "AÑO": 2024, "MES": 1, "CAUSAL": "NO COTIZADO"},
+                {"PLACA": "BBB222", "ACCION": "CAMBIO", "AÑO": 2025, "MES": 1, "CAUSAL": "AJUSTE"},
+                {"PLACA": "CCC333", "ACCION": "CAMBIO", "AÑO": 2025, "MES": 2, "CAUSAL": "PREDESARME"},
+            ]
+        )
+        result = _calcular_tasa_culpa_taller_cambio(df, años=[2025], meses=[1])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result.iloc[0]["total"], 1)
+        self.assertEqual(result.iloc[0]["culpa_taller"], 0)
+
+    def test_calcular_tasa_culpa_taller_mezcla_varios_periodos(self):
+        df = pd.DataFrame(
+            [
+                {"PLACA": "AAA111", "ACCION": "CAMBIO", "AÑO": 2024, "MES": 1, "CAUSAL": "NO COTIZADO"},
+                {"PLACA": "BBB222", "ACCION": "CAMBIO", "AÑO": 2025, "MES": 1, "CAUSAL": "AJUSTE"},
+                {"PLACA": "CCC333", "ACCION": "CAMBIO", "AÑO": 2025, "MES": 2, "CAUSAL": "PREDESARME"},
+                {"PLACA": "DDD444", "ACCION": "CAMBIO", "AÑO": 2025, "MES": 3, "CAUSAL": "SIN FOTOS CLARAS"},
+            ]
+        )
+        result = _calcular_tasa_culpa_taller_cambio(df, años=[2024, 2025], meses=[1, 3])
+        self.assertEqual(len(result), 3)
+        self.assertEqual(result["total"].sum(), 3)
+        self.assertEqual(result["culpa_taller"].sum(), 2)
+
+    def test_prepara_reporte_cambio_repuesto_con_listas(self):
+        df = pd.DataFrame(
+            [
+                {"PLACA": "AAA111", "COMPAÑIA_DE_SEGUROS": "SURA", "IMPREVISTO": "farola", "CAUSAL": "NO COTIZADO", "ACCION": "CAMBIO", "AÑO": 2024, "MES": 1},
+                {"PLACA": "BBB222", "COMPAÑIA_DE_SEGUROS": "ALLIANZ", "IMPREVISTO": "bomper", "CAUSAL": "NO VISIBLE", "ACCION": "CAMBIO", "AÑO": 2025, "MES": 1},
+                {"PLACA": "CCC333", "COMPAÑIA_DE_SEGUROS": "BOLIVAR", "IMPREVISTO": "puerta", "CAUSAL": "AJUSTE", "ACCION": "CAMBIO", "AÑO": 2025, "MES": 2},
+            ]
+        )
+        result = _preparar_reporte_cambio_repuesto_mes(df, años=[2025], meses=[1, 2])
+        self.assertEqual(len(result), 2)
+        self.assertEqual(set(result["PLACA"].tolist()), {"BBB222", "CCC333"})
 
 
 if __name__ == "__main__":
