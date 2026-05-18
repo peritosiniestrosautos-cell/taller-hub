@@ -5,6 +5,7 @@ import pandas as pd
 from modules.imprevistos_visualizations import (
     _filtrar_demora_definicion_por_periodo_y_cia,
     _format_month_year_label,
+    _preparar_reporte_cambio_repuesto_mes,
     _preparar_reporte_demora_definicion,
 )
 
@@ -12,6 +13,69 @@ from modules.imprevistos_visualizations import (
 class ImprevistosVisualizationsTests(unittest.TestCase):
     def test_format_month_year_label_usa_el_anio_real_del_registro(self):
         self.assertEqual(_format_month_year_label(3, 2026), "March 2026")
+
+    def test_prepara_reporte_cambio_repuesto_filtra_mes_y_columnas_solicitadas(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "PLACA": " aaa111 ",
+                    "COMPAÑIA_DE_SEGUROS": "SURA",
+                    "IMPREVISTO": "farola rh",
+                    "CAUSAL": "NO COTIZADO",
+                    "ACCION": "CAMBIO",
+                    "AÑO": 2026,
+                    "MES": 3,
+                },
+                {
+                    "PLACA": "BBB222",
+                    "COMPAÑIA_DE_SEGUROS": "ALLIANZ",
+                    "IMPREVISTO": "bomper",
+                    "CAUSAL": "NO VISIBLE",
+                    "ACCION": "CAMBIO",
+                    "AÑO": 2026,
+                    "MES": 4,
+                },
+                {
+                    "PLACA": "CCC333",
+                    "COMPAÑIA_DE_SEGUROS": "BOLIVAR",
+                    "IMPREVISTO": "puerta",
+                    "CAUSAL": "AJUSTE",
+                    "ACCION": "AJUSTE",
+                    "AÑO": 2026,
+                    "MES": 3,
+                },
+            ]
+        )
+
+        result = _preparar_reporte_cambio_repuesto_mes(df, año=2026, mes=3)
+
+        self.assertEqual(list(result.columns), ["PLACA", "CIA", "IMPREVISTO", "CAUSAL"])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result.iloc[0].to_dict(), {
+            "PLACA": "AAA111",
+            "CIA": "SURA",
+            "IMPREVISTO": "farola rh",
+            "CAUSAL": "NO COTIZADO",
+        })
+
+    def test_prepara_reporte_cambio_repuesto_acepta_columna_compania_sin_tilde(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "PLACA": "DDD444",
+                    "COMPAÑIA_DE_SEGUROS": "MAPFRE",
+                    "IMPREVISTO": "persiana",
+                    "CAUSAL": "PREDESARME",
+                    "ACCION": "CAMBIO REPUESTO",
+                    "AÑO": 2025,
+                    "MES": 12,
+                }
+            ]
+        )
+
+        result = _preparar_reporte_cambio_repuesto_mes(df, año=2025, mes=12)
+
+        self.assertEqual(result.iloc[0]["CIA"], "MAPFRE")
 
     def test_filtra_demora_definicion_por_cia_mes_trimestre_y_anio(self):
         df = pd.DataFrame(

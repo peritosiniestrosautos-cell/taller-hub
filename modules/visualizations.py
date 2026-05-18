@@ -9,6 +9,7 @@ RF-003: Componentes de visualización
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+from io import BytesIO
 from datetime import datetime
 
 from .config import PORCENTAJE_HONORARIOS
@@ -308,6 +309,146 @@ def render_grafico_ahorro_mes(df):
 # GRÁFICO DE CAUSALES
 # ============================================================================
 
+def _filtrar_df_causales_por_periodo(df, tipo_periodo, periodo):
+    """Filtra el DataFrame por Mes, Trimestre o Año usando columnas AÑO/MES."""
+    if df is None or df.empty or 'AÑO' not in df.columns or 'MES' not in df.columns:
+        return pd.DataFrame(columns=df.columns if df is not None else None)
+
+    df_periodo = df.copy()
+    df_periodo['_AÑO'] = pd.to_numeric(df_periodo['AÑO'], errors='coerce')
+    df_periodo['_MES'] = pd.to_numeric(df_periodo['MES'], errors='coerce')
+    df_periodo = df_periodo[
+        df_periodo['_AÑO'].notna()
+        & df_periodo['_MES'].notna()
+        & (df_periodo['_AÑO'] > 2000)
+        & (df_periodo['_MES'] >= 1)
+        & (df_periodo['_MES'] <= 12)
+    ].copy()
+
+    if df_periodo.empty:
+        return df_periodo.drop(columns=['_AÑO', '_MES'], errors='ignore')
+
+    df_periodo['_AÑO'] = df_periodo['_AÑO'].astype(int)
+    df_periodo['_MES'] = df_periodo['_MES'].astype(int)
+
+    if tipo_periodo == "Mes":
+        try:
+            anio, mes = str(periodo).split("-")
+            mask = (df_periodo['_AÑO'] == int(anio)) & (df_periodo['_MES'] == int(mes))
+        except ValueError:
+            mask = pd.Series(False, index=df_periodo.index)
+    elif tipo_periodo == "Trimestre":
+        try:
+            anio, trimestre = str(periodo).split("-T")
+            trimestre = int(trimestre)
+            mes_inicio = (trimestre - 1) * 3 + 1
+            meses = {mes_inicio, mes_inicio + 1, mes_inicio + 2}
+            mask = (df_periodo['_AÑO'] == int(anio)) & (df_periodo['_MES'].isin(meses))
+        except ValueError:
+            mask = pd.Series(False, index=df_periodo.index)
+    elif tipo_periodo == "Año":
+        mask = df_periodo['_AÑO'] == int(periodo)
+    else:
+        mask = pd.Series(True, index=df_periodo.index)
+
+    return df_periodo[mask].drop(columns=['_AÑO', '_MES'], errors='ignore').copy()
+
+
+def _preparar_reporte_top_causales_ahorro(df, periodo_label):
+    """Construye las hojas de resumen y detalle para el reporte de causales."""
+    resumen_cols = ["PERIODO", "CAUSAL", "RECUPERACION", "PORCENTAJE_EQUIVALENTE", "VEHICULOS"]
+    detalle_cols = [
+        "PERIODO", "PLACA", "CIA", "IMPREVISTO", "ACCION",
+        "CAUSAL", "DIFERENCIA", "ESTATUS",
+    ]
+
+    if df is None or df.empty or 'CAUSAL' not in df.columns:
+        return pd.DataFrame(columns=resumen_cols), pd.DataFrame(columns=detalle_cols)
+
+    df_w = df[df['CAUSAL'].notna() & (df['CAUSAL'].astype(str).str.strip() != '')].copy()
+    if df_w.empty:
+        return pd.DataFrame(columns=resumen_cols), pd.DataFrame(columns=detalle_cols)
+
+    df_w['DIFERENCIA'] = pd.to_numeric(df_w.get('DIFERENCIA', 0), errors='coerce').fillna(0)
+    df_w['_CAUSAL'] = df_w['CAUSAL'].astype(str).str.strip()
+    df_w['_PLACA'] = (
+        df_w['PLACA'].astype(str).str.upper().str.strip()
+        if 'PLACA' in df_w.columns
+        else ''
+    )
+
+    resumen = (
+        df_w.groupby('_CAUSAL')
+        .agg(
+            RECUPERACION=('DIFERENCIA', 'sum'),
+            VEHICULOS=('_PLACA', 'nunique'),
+        )
+        .reset_index()
+        .rename(columns={'_CAUSAL': 'CAUSAL'})
+    )
+    total_recuperacion = resumen['RECUPERACION'].sum()
+    resumen['PORCENTAJE_EQUIVALENTE'] = (
+        (resumen['RECUPERACION'] / total_recuperacion * 100).round(2)
+        if total_recuperacion else 0
+    )
+    resumen.insert(0, "PERIODO", periodo_label)
+    resumen = resumen[resumen_cols].sort_values('RECUPERACION', ascending=False).reset_index(drop=True)
+
+    cia_col = (
+        'COMPAÑIA_DE_SEGUROS'
+        if 'COMPAÑIA_DE_SEGUROS' in df_w.columns
+        else 'COMPAÑÍA_DE_SEGUROS'
+        if 'COMPAÑÍA_DE_SEGUROS' in df_w.columns
+        else None
+    )
+
+    detalle = pd.DataFrame({
+        "PERIODO": periodo_label,
+        "PLACA": df_w['_PLACA'],
+        "CIA": df_w[cia_col].astype(str).str.strip() if cia_col else "",
+        "IMPREVISTO": (
+            df_w['IMPREVISTO'].astype(str).str.strip()
+            if 'IMPREVISTO' in df_w.columns
+            else ""
+        ),
+        "ACCION": (
+            df_w['ACCION'].astype(str).str.strip()
+            if 'ACCION' in df_w.columns
+            else ""
+        ),
+        "CAUSAL": df_w['_CAUSAL'],
+        "DIFERENCIA": df_w['DIFERENCIA'],
+        "ESTATUS": (
+            df_w['ESTATUS'].astype(str).str.strip()
+            if 'ESTATUS' in df_w.columns
+            else ""
+        ),
+    })
+    detalle = detalle[detalle_cols].sort_values('DIFERENCIA', ascending=False).reset_index(drop=True)
+
+    return resumen, detalle
+
+
+def _generar_excel_reporte_top_causales(resumen, detalle):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        resumen.to_excel(writer, sheet_name='RESUMEN POR CAUSAL', index=False)
+        detalle.to_excel(writer, sheet_name='DETALLE', index=False)
+    return output.getvalue()
+
+
+def _period_label_from_key(tipo_periodo, periodo):
+    if tipo_periodo == "Mes":
+        anio, mes = str(periodo).split("-")
+        return f"Mes {int(mes):02d}/{int(anio)}"
+    if tipo_periodo == "Trimestre":
+        anio, trimestre = str(periodo).split("-T")
+        return f"Trimestre T{trimestre}/{anio}"
+    if tipo_periodo == "Año":
+        return f"Año {periodo}"
+    return "Todos los periodos"
+
+
 def render_grafico_causales(df):
     """
     RF-003.5: Gráfico de causales de cambio (barras horizontales)
@@ -316,7 +457,101 @@ def render_grafico_causales(df):
         st.warning("No se encontró columna de CAUSAL")
         return
 
-    df_causal = df[df['CAUSAL'].notna() & (df['CAUSAL'] != '')].groupby('CAUSAL').agg({
+    if 'DIFERENCIA' not in df.columns:
+        st.warning("No se encontró columna de DIFERENCIA/AHORRO")
+        return
+
+    if 'AÑO' not in df.columns or 'MES' not in df.columns:
+        st.warning("No se encontraron columnas AÑO/MES para filtrar causales por periodo.")
+        return
+
+    df_periodos = df.copy()
+    df_periodos['_AÑO'] = pd.to_numeric(df_periodos['AÑO'], errors='coerce')
+    df_periodos['_MES'] = pd.to_numeric(df_periodos['MES'], errors='coerce')
+    df_periodos = df_periodos[
+        df_periodos['_AÑO'].notna()
+        & df_periodos['_MES'].notna()
+        & (df_periodos['_AÑO'] > 2000)
+        & (df_periodos['_MES'] >= 1)
+        & (df_periodos['_MES'] <= 12)
+    ].copy()
+
+    if df_periodos.empty:
+        st.info("No hay periodos válidos para mostrar causales.")
+        return
+
+    df_periodos['_AÑO'] = df_periodos['_AÑO'].astype(int)
+    df_periodos['_MES'] = df_periodos['_MES'].astype(int)
+    df_periodos['_TRIMESTRE'] = ((df_periodos['_MES'] - 1) // 3 + 1).astype(int)
+
+    filtro_col1, filtro_col2 = st.columns([1, 2])
+    with filtro_col1:
+        tipo_periodo = st.selectbox(
+            "Periodo",
+            options=["Mes", "Trimestre", "Año"],
+            key="top_causales_tipo_periodo",
+        )
+
+    if tipo_periodo == "Mes":
+        opciones = (
+            df_periodos[['_AÑO', '_MES']]
+            .drop_duplicates()
+            .sort_values(['_AÑO', '_MES'], ascending=[False, False])
+        )
+        period_options = [
+            f"{row['_AÑO']}-{row['_MES']:02d}"
+            for _, row in opciones.iterrows()
+        ]
+        format_func = lambda value: _period_label_from_key("Mes", value)
+    elif tipo_periodo == "Trimestre":
+        opciones = (
+            df_periodos[['_AÑO', '_TRIMESTRE']]
+            .drop_duplicates()
+            .sort_values(['_AÑO', '_TRIMESTRE'], ascending=[False, False])
+        )
+        period_options = [
+            f"{row['_AÑO']}-T{row['_TRIMESTRE']}"
+            for _, row in opciones.iterrows()
+        ]
+        format_func = lambda value: _period_label_from_key("Trimestre", value)
+    else:
+        period_options = [str(anio) for anio in sorted(df_periodos['_AÑO'].unique(), reverse=True)]
+        format_func = lambda value: _period_label_from_key("Año", value)
+
+    with filtro_col2:
+        periodo_sel = st.selectbox(
+            "Seleccionar periodo",
+            options=period_options,
+            format_func=format_func,
+            key=f"top_causales_periodo_{tipo_periodo}",
+        )
+
+    df_filtrado_periodo = _filtrar_df_causales_por_periodo(df, tipo_periodo, periodo_sel)
+    periodo_label = _period_label_from_key(tipo_periodo, periodo_sel)
+    resumen_reporte, detalle_reporte = _preparar_reporte_top_causales_ahorro(
+        df_filtrado_periodo,
+        periodo_label,
+    )
+    excel_reporte = _generar_excel_reporte_top_causales(resumen_reporte, detalle_reporte)
+
+    title_col, action_col = st.columns([3, 2])
+    with title_col:
+        st.subheader("📊 Top Causales de Cambio por Valor de Ahorro")
+    with action_col:
+        st.download_button(
+            label="📥 Descargar reporte",
+            data=excel_reporte,
+            file_name=f"top_causales_ahorro_{periodo_sel}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            disabled=resumen_reporte.empty and detalle_reporte.empty,
+            help="Incluye hojas RESUMEN POR CAUSAL y DETALLE para el periodo seleccionado.",
+            use_container_width=True,
+        )
+
+    df_causal = df_filtrado_periodo[
+        df_filtrado_periodo['CAUSAL'].notna()
+        & (df_filtrado_periodo['CAUSAL'].astype(str).str.strip() != '')
+    ].groupby('CAUSAL').agg({
         'DIFERENCIA': ['sum', 'count']
     }).reset_index()
     df_causal.columns = ['CAUSAL', 'AHORRO_TOTAL', 'CANTIDAD']
@@ -375,7 +610,7 @@ def render_grafico_causales(df):
     ))
 
     fig.update_layout(
-        title='📊 Top Causales de Cambio por Valor de Ahorro',
+        title=f'Top 10 - {periodo_label}',
         xaxis_title='Ahorro Total ($)',
         yaxis_title=None,
         height=chart_height,

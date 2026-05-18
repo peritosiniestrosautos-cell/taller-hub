@@ -586,38 +586,126 @@ def _calcular_tasa_culpa_taller_cambio(df: pd.DataFrame) -> pd.DataFrame:
     return resumen
 
 
+def _preparar_reporte_cambio_repuesto_mes(df: pd.DataFrame, año: int, mes: int) -> pd.DataFrame:
+    """
+    Prepara el detalle descargable de imprevistos con cambio para un mes.
+    """
+    columnas_reporte = ["PLACA", "CIA", "IMPREVISTO", "CAUSAL"]
+
+    if df is None or df.empty:
+        return pd.DataFrame(columns=columnas_reporte)
+
+    required = {"PLACA", "ACCION", "AÑO", "MES"}
+    if not required.issubset(df.columns):
+        return pd.DataFrame(columns=columnas_reporte)
+
+    df_w = df.copy()
+    df_w["_AÑO"] = pd.to_numeric(df_w["AÑO"], errors="coerce")
+    df_w["_MES"] = pd.to_numeric(df_w["MES"], errors="coerce")
+    df_w["_ACCION"] = df_w["ACCION"].astype(str).str.upper().str.strip()
+
+    df_w = df_w[
+        df_w["_ACCION"].str.contains("CAMBIO", na=False)
+        & (df_w["_AÑO"] == int(año))
+        & (df_w["_MES"] == int(mes))
+    ].copy()
+
+    if df_w.empty:
+        return pd.DataFrame(columns=columnas_reporte)
+
+    cia_col = (
+        "COMPAÑIA_DE_SEGUROS"
+        if "COMPAÑIA_DE_SEGUROS" in df_w.columns
+        else "COMPAÑÍA_DE_SEGUROS"
+        if "COMPAÑÍA_DE_SEGUROS" in df_w.columns
+        else None
+    )
+
+    reporte = pd.DataFrame({
+        "PLACA": df_w["PLACA"].astype(str).str.upper().str.strip(),
+        "CIA": df_w[cia_col].astype(str).str.strip() if cia_col else "",
+        "IMPREVISTO": (
+            df_w["IMPREVISTO"].astype(str).str.strip()
+            if "IMPREVISTO" in df_w.columns
+            else ""
+        ),
+        "CAUSAL": (
+            df_w["CAUSAL"].astype(str).str.strip()
+            if "CAUSAL" in df_w.columns
+            else ""
+        ),
+    })
+
+    return reporte.sort_values(["PLACA", "CIA", "IMPREVISTO"]).reset_index(drop=True)
+
+
 def render_grafico_culpa_taller_mensual(df=None):
     """
     Gráfico de línea: tasa mensual de imprevistos con cambio de repuesto (culpa del taller).
     Estilo consistente con el resto del dashboard.
     """
     import datetime
-    st.subheader("🔧 Imprevistos con Cambio de Repuesto")
 
     if df is None or df.empty:
+        st.subheader("🔧 Imprevistos con Cambio de Repuesto")
         st.info("No hay datos disponibles.")
         return
 
     resumen = _calcular_tasa_culpa_taller_cambio(df)
 
     if resumen.empty:
+        st.subheader("🔧 Imprevistos con Cambio de Repuesto")
         st.info("No se encontraron imprevistos con ACCION=CAMBIO y mano de obra registrada.")
         return
+
+    header_container = st.container()
 
     años_disponibles = sorted(resumen['año'].unique().tolist(), reverse=True)
     año_actual = datetime.datetime.now().year
     default_idx = años_disponibles.index(año_actual) if año_actual in años_disponibles else 0
-    año_sel = st.selectbox(
-        "Año",
-        options=años_disponibles,
-        index=default_idx,
-        key="culpa_taller_año"
-    )
+    col_anio, col_mes = st.columns(2)
+    with col_anio:
+        año_sel = st.selectbox(
+            "Año",
+            options=años_disponibles,
+            index=default_idx,
+            key="culpa_taller_año"
+        )
     resumen = resumen[resumen['año'] == año_sel].copy()
 
     if resumen.empty:
         st.info(f"No hay datos para el año {año_sel}.")
         return
+
+    meses_disponibles = resumen[["mes", "mes_label"]].drop_duplicates().sort_values("mes")
+    mes_options = meses_disponibles["mes"].astype(int).tolist()
+    mes_labels = dict(zip(mes_options, meses_disponibles["mes_label"].tolist()))
+    with col_mes:
+        mes_sel = st.selectbox(
+            "Mes del reporte",
+            options=mes_options,
+            format_func=lambda value: mes_labels.get(value, str(value)),
+            index=len(mes_options) - 1,
+            key="culpa_taller_mes_reporte",
+        )
+
+    reporte = _preparar_reporte_cambio_repuesto_mes(df, año=año_sel, mes=mes_sel)
+    csv_reporte = reporte.to_csv(index=False).encode("utf-8-sig")
+
+    with header_container:
+        title_col, action_col = st.columns([3, 2])
+        with title_col:
+            st.subheader("🔧 Imprevistos con Cambio de Repuesto")
+        with action_col:
+            st.download_button(
+                label="📥 Descargar reporte",
+                data=csv_reporte,
+                file_name=f"imprevistos_cambio_repuesto_{año_sel}_{int(mes_sel):02d}.csv",
+                mime="text/csv",
+                disabled=reporte.empty,
+                help="Descarga PLACA, CIA, IMPREVISTO y CAUSAL para el mes seleccionado.",
+                use_container_width=True,
+            )
 
     fig = go.Figure()
 
