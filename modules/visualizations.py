@@ -572,10 +572,11 @@ def render_grafico_causales(df):
     periodo_label = _period_label_from_key(tipo_periodo, periodo_sel)
 
     # Filtros adicionales: Causal y Acción
+    # Se cargan desde el DataFrame completo para mostrar TODAS las del documento
     filtro_causal_col, filtro_accion_col = st.columns(2)
     with filtro_causal_col:
         causales_disp = sorted(
-            df_filtrado_periodo['CAUSAL']
+            df['CAUSAL']
             .dropna()
             .astype(str)
             .str.strip()
@@ -590,12 +591,12 @@ def render_grafico_causales(df):
         )
     with filtro_accion_col:
         acciones_disp = sorted(
-            df_filtrado_periodo['ACCION']
+            df['ACCION']
             .dropna()
             .astype(str)
             .str.strip()
             .unique()
-        ) if 'ACCION' in df_filtrado_periodo.columns else []
+        ) if 'ACCION' in df.columns else []
         acciones_disp = [a for a in acciones_disp if a != '']
         acciones_sel = st.multiselect(
             "Acción",
