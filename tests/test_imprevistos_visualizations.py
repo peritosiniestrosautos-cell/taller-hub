@@ -49,12 +49,13 @@ class ImprevistosVisualizationsTests(unittest.TestCase):
 
         result = _preparar_reporte_cambio_repuesto_mes(df, año=2026, mes=3)
 
-        self.assertEqual(list(result.columns), ["PLACA", "CIA", "IMPREVISTO", "CAUSAL"])
+        self.assertEqual(list(result.columns), ["PLACA", "LINEA", "CIA", "IMPREVISTO", "CAUSAL"])
         self.assertEqual(len(result), 1)
         self.assertEqual(result.iloc[0].to_dict(), {
             "PLACA": "AAA111",
+            "LINEA": "",
             "CIA": "SURA",
-            "IMPREVISTO": "farola rh",
+            "IMPREVISTO": "FAROLA RH",
             "CAUSAL": "NO COTIZADO",
         })
 

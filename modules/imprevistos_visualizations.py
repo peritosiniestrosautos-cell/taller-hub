@@ -590,7 +590,7 @@ def _preparar_reporte_cambio_repuesto_mes(df: pd.DataFrame, año: int, mes: int)
     """
     Prepara el detalle descargable de imprevistos con cambio para un mes.
     """
-    columnas_reporte = ["PLACA", "CIA", "IMPREVISTO", "CAUSAL"]
+    columnas_reporte = ["PLACA", "LINEA", "CIA", "IMPREVISTO", "CAUSAL"]
 
     if df is None or df.empty:
         return pd.DataFrame(columns=columnas_reporte)
@@ -623,14 +623,74 @@ def _preparar_reporte_cambio_repuesto_mes(df: pd.DataFrame, año: int, mes: int)
 
     reporte = pd.DataFrame({
         "PLACA": df_w["PLACA"].astype(str).str.upper().str.strip(),
-        "CIA": df_w[cia_col].astype(str).str.strip() if cia_col else "",
+        "LINEA": (
+            df_w["LINEA"].astype(str).str.upper().str.strip()
+            if "LINEA" in df_w.columns
+            else ""
+        ),
+        "CIA": df_w[cia_col].astype(str).str.strip().str.upper() if cia_col else "",
         "IMPREVISTO": (
-            df_w["IMPREVISTO"].astype(str).str.strip()
+            df_w["IMPREVISTO"].astype(str).str.strip().str.upper()
             if "IMPREVISTO" in df_w.columns
             else ""
         ),
         "CAUSAL": (
-            df_w["CAUSAL"].astype(str).str.strip()
+            df_w["CAUSAL"].astype(str).str.strip().str.upper()
+            if "CAUSAL" in df_w.columns
+            else ""
+        ),
+    })
+
+    return reporte.sort_values(["PLACA", "CIA", "IMPREVISTO"]).reset_index(drop=True)
+
+
+def _preparar_reporte_cambio_repuesto_total(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Prepara el detalle de TODOS los imprevistos con cambio de repuestos,
+    sin filtrar por mes específico.
+    """
+    columnas_reporte = ["PLACA", "LINEA", "CIA", "IMPREVISTO", "CAUSAL"]
+
+    if df is None or df.empty:
+        return pd.DataFrame(columns=columnas_reporte)
+
+    required = {"PLACA", "ACCION"}
+    if not required.issubset(df.columns):
+        return pd.DataFrame(columns=columnas_reporte)
+
+    df_w = df.copy()
+    df_w["_ACCION"] = df_w["ACCION"].astype(str).str.upper().str.strip()
+
+    df_w = df_w[
+        df_w["_ACCION"].str.contains("CAMBIO", na=False)
+    ].copy()
+
+    if df_w.empty:
+        return pd.DataFrame(columns=columnas_reporte)
+
+    cia_col = (
+        "COMPAÑIA_DE_SEGUROS"
+        if "COMPAÑIA_DE_SEGUROS" in df_w.columns
+        else "COMPAÑÍA_DE_SEGUROS"
+        if "COMPAÑÍA_DE_SEGUROS" in df_w.columns
+        else None
+    )
+
+    reporte = pd.DataFrame({
+        "PLACA": df_w["PLACA"].astype(str).str.upper().str.strip(),
+        "LINEA": (
+            df_w["LINEA"].astype(str).str.upper().str.strip()
+            if "LINEA" in df_w.columns
+            else ""
+        ),
+        "CIA": df_w[cia_col].astype(str).str.strip().str.upper() if cia_col else "",
+        "IMPREVISTO": (
+            df_w["IMPREVISTO"].astype(str).str.strip().str.upper()
+            if "IMPREVISTO" in df_w.columns
+            else ""
+        ),
+        "CAUSAL": (
+            df_w["CAUSAL"].astype(str).str.strip().str.upper()
             if "CAUSAL" in df_w.columns
             else ""
         ),
