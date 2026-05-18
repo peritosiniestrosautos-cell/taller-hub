@@ -23,6 +23,7 @@ from .fee_config import load_fee_config, calculate_fees_per_month, format_curren
 from .imprevistos_processor import resumir_imprevistos_mensuales, extraer_imprevistos_from_dataframe
 from .data_loader import load_tasa_imprevistos_from_excel
 from .imprevistos_visualizations import CAUSALES_CULPA_TALLER
+from .date_utils import parse_source_date_column
 
 import matplotlib
 matplotlib.use('Agg')
@@ -199,6 +200,179 @@ def _preparar_cambio_repuestos_pdf(df, año=None, mes=None):
     })
 
     return reporte.sort_values(["PLACA", "CIA", "IMPREVISTO"]).reset_index(drop=True)
+
+
+def _preparar_demora_definicion_pdf(df):
+    """Prepara datos de demora en definición del imprevisto para el PDF.
+
+    Filtra, valida fechas, deduplica por PLACA+SINIESTRO y agrupa
+    por COMPAÑIA_DE_SEGUROS y ESTATUS devolviendo promedio de días.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    required_cols = {"FECHA_INGR", "FECHA_AUTO", "COMPAÑIA_DE_SEGUROS", "ESTATUS", "PLACA"}
+    if not required_cols.issubset(df.columns):
+        return pd.DataFrame()
+
+    df_w = df.copy()
+    df_w["_PLACA"] = df_w["PLACA"].astype(str).str.upper().str.strip()
+    df_w["_SINIESTRO"] = (
+        df_w["SINIESTRO"].astype(str).str.upper().str.strip()
+        if "SINIESTRO" in df_w.columns
+        else ""
+    )
+
+    df_w["FECHA_INGR"] = parse_source_date_column(df_w["FECHA_INGR"], "FECHA_INGR")
+    df_w["FECHA_AUTO"] = parse_source_date_column(df_w["FECHA_AUTO"], "FECHA_AUTO")
+    df_w = df_w[df_w["FECHA_INGR"].notna() & df_w["FECHA_AUTO"].notna()].copy()
+
+    if df_w.empty:
+        return pd.DataFrame()
+
+    año_limite = datetime.now().year + 1
+    df_w = df_w[
+        (df_w["FECHA_INGR"].dt.year >= 2000)
+        & (df_w["FECHA_INGR"].dt.year <= año_limite)
+        & (df_w["FECHA_AUTO"].dt.year >= 2000)
+        & (df_w["FECHA_AUTO"].dt.year <= año_limite)
+    ].copy()
+
+    if df_w.empty:
+        return pd.DataFrame()
+
+    df_w["_DEMORA_DIAS"] = (df_w["FECHA_AUTO"] - df_w["FECHA_INGR"]).dt.days
+    df_w["ESTATUS"] = df_w["ESTATUS"].astype(str).str.upper().str.strip()
+    df_w = df_w[df_w["ESTATUS"].isin(["AUTORIZADO", "RECHAZADO"])].copy()
+    df_w = df_w.drop_duplicates(subset=["_PLACA", "_SINIESTRO"], keep="first")
+
+    if df_w.empty:
+        return pd.DataFrame()
+
+    agrupado = (
+        df_w.groupby(["COMPAÑIA_DE_SEGUROS", "ESTATUS"])
+        .agg(promedio_demora=("_DEMORA_DIAS", "mean"), conteo=("_DEMORA_DIAS", "count"))
+        .reset_index()
+    )
+    agrupado["promedio_demora"] = agrupado["promedio_demora"].round(1)
+
+    # Pivot para tener AUTORIZADO y RECHAZADO como columnas
+    pivot = agrupado.pivot_table(
+        index="COMPAÑIA_DE_SEGUROS",
+        columns="ESTATUS",
+        values=["promedio_demora", "conteo"],
+        fill_value=0,
+    )
+    pivot.columns = [f"{val}_{est}" for val, est in pivot.columns]
+    pivot = pivot.reset_index()
+
+    for estatus in ["AUTORIZADO", "RECHAZADO"]:
+        for metric in ["promedio_demora", "conteo"]:
+            col_name = f"{metric}_{estatus}"
+            if col_name not in pivot.columns:
+                pivot[col_name] = 0
+
+    pivot["_total_promedio"] = pivot["promedio_demora_AUTORIZADO"] + pivot["promedio_demora_RECHAZADO"]
+    pivot = pivot.sort_values("_total_promedio", ascending=False).reset_index(drop=True)
+    return pivot
+
+
+def _generar_grafico_demora_definicion(df_pivot):
+    """Genera gráfico de barras agrupadas de demora en definición por CIA y Estatus."""
+    if df_pivot is None or df_pivot.empty:
+        return None
+
+    cias = df_pivot["COMPAÑIA_DE_SEGUROS"].tolist()
+    if not cias:
+        return None
+
+    autorizado_vals = df_pivot["promedio_demora_AUTORIZADO"].tolist()
+    rechazado_vals = df_pivot["promedio_demora_RECHAZADO"].tolist()
+    autorizado_cnt = df_pivot["conteo_AUTORIZADO"].tolist()
+    rechazado_cnt = df_pivot["conteo_RECHAZADO"].tolist()
+
+    x = range(len(cias))
+    width = 0.35
+
+    fig, ax = plt.subplots(figsize=(6.5, 3))
+
+    bars1 = ax.bar(
+        [i - width / 2 for i in x],
+        autorizado_vals,
+        width,
+        label="AUTORIZADO",
+        color="#22C55E",
+        edgecolor="white",
+        linewidth=0.5,
+    )
+    bars2 = ax.bar(
+        [i + width / 2 for i in x],
+        rechazado_vals,
+        width,
+        label="RECHAZADO",
+        color="#EF4444",
+        edgecolor="white",
+        linewidth=0.5,
+    )
+
+    # Anotaciones
+    for bar, cnt in zip(bars1, autorizado_cnt):
+        height = bar.get_height()
+        if height > 0:
+            ax.annotate(
+                f"{height:.1f}d ({int(cnt)})",
+                xy=(bar.get_x() + bar.get_width() / 2, height),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=7,
+                fontweight="bold",
+                color="#15803D",
+            )
+
+    for bar, cnt in zip(bars2, rechazado_cnt):
+        height = bar.get_height()
+        if height > 0:
+            ax.annotate(
+                f"{height:.1f}d ({int(cnt)})",
+                xy=(bar.get_x() + bar.get_width() / 2, height),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=7,
+                fontweight="bold",
+                color="#B91C1C",
+            )
+
+    ax.set_title(
+        "Demora en Definición del Imprevisto por CIA y Estatus",
+        fontsize=12,
+        fontweight="bold",
+        color="#1E293B",
+        pad=15,
+    )
+    ax.set_ylabel("Promedio de Días de Demora", fontsize=9, color="#64748B")
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(cias, rotation=30, ha="right", fontsize=8, color="#64748B")
+    ax.tick_params(axis="y", labelsize=8, colors="#64748B")
+    ax.set_ylim(bottom=0)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#E2E8F0")
+    ax.spines["bottom"].set_color("#E2E8F0")
+    ax.grid(axis="y", linestyle="--", alpha=0.4, color="#CBD5E1")
+    ax.set_axisbelow(True)
+    ax.legend(loc="upper right", fontsize=8, frameon=False)
+    fig.tight_layout()
+
+    img_buffer = io.BytesIO()
+    fig.savefig(img_buffer, format="png", dpi=150, bbox_inches="tight",
+                facecolor="white", edgecolor="none")
+    img_buffer.seek(0)
+    plt.close(fig)
+    return img_buffer
 
 
 def _generar_grafico_cambio_repuestos(df):
@@ -388,7 +562,7 @@ def _calcular_causales_imprevistos_pdf(df):
     return resumen
 
 
-def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_nombre="Taller Hub", filtros_graficos=None):
+def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_nombre="Taller Hub", filtros_graficos=None, año=None, mes=None):
     """
     Generar reporte PDF del dashboard actual
     
@@ -739,23 +913,25 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
             elements.append(Spacer(1, 15))
         
         # =========================================================================
-        # IMPREVISTOS CON CAMBIO DE REPUESTOS (Gráfico + Tabla del mes en curso)
+        # IMPREVISTOS CON CAMBIO DE REPUESTOS (Gráfico + Tabla del período)
         # =========================================================================
-        ahora = datetime.now()
-        año_actual = ahora.year
-        mes_actual = ahora.month
-        df_cambio_rep = _preparar_cambio_repuestos_pdf(df, año=año_actual, mes=mes_actual)
-        
+        año_cambio = int(año) if año is not None else datetime.now().year
+        mes_cambio = int(mes) if mes is not None else None
+        df_cambio_rep = _preparar_cambio_repuestos_pdf(df, año=año_cambio, mes=mes_cambio)
+
         # Gráfico histórico (siempre mostrar si hay datos de cambio)
         grafico_cambio_buf = _generar_grafico_cambio_repuestos(df)
         if grafico_cambio_buf:
             elements.append(Paragraph("🔧 Imprevistos con Cambio de Repuestos", heading_style))
             elements.append(Image(grafico_cambio_buf, width=6.5*inch, height=3*inch))
             elements.append(Spacer(1, 10))
-        
+
         if not df_cambio_rep.empty:
-            mes_nombre_actual = MESES_ES.get(mes_actual, str(mes_actual))
-            elements.append(Paragraph(f"Detalle del Mes en Curso ({mes_nombre_actual} {año_actual})", subheading_style))
+            if mes_cambio is not None:
+                mes_nombre_cambio = MESES_ES.get(mes_cambio, str(mes_cambio))
+                elements.append(Paragraph(f"Detalle del Período ({mes_nombre_cambio} {año_cambio})", subheading_style))
+            else:
+                elements.append(Paragraph(f"Detalle del Período Seleccionado ({año_cambio})", subheading_style))
             
             cambio_table_data = [[
                 Paragraph("<b>PLACA</b>", body_style),
@@ -792,9 +968,60 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
             elements.append(cambio_table)
             elements.append(Spacer(1, 15))
         elif grafico_cambio_buf:
-            # Si hay gráfico pero no hay datos para el mes actual, mostrar mensaje
-            mes_nombre_actual = MESES_ES.get(mes_actual, str(mes_actual))
-            elements.append(Paragraph(f"No hay imprevistos con cambio de repuestos para {mes_nombre_actual} {año_actual}.", body_style))
+            # Si hay gráfico pero no hay datos para el período seleccionado, mostrar mensaje
+            if mes_cambio is not None:
+                mes_nombre_cambio = MESES_ES.get(mes_cambio, str(mes_cambio))
+                elements.append(Paragraph(f"No hay imprevistos con cambio de repuestos para {mes_nombre_cambio} {año_cambio}.", body_style))
+            else:
+                elements.append(Paragraph(f"No hay imprevistos con cambio de repuestos para el período seleccionado ({año_cambio}).", body_style))
+            elements.append(Spacer(1, 15))
+        
+        # =========================================================================
+        # DEMORA EN DEFINICIÓN DEL IMPREVISTO (Gráfico + Tabla)
+        # =========================================================================
+        df_demora = _preparar_demora_definicion_pdf(df)
+        if not df_demora.empty:
+            elements.append(Paragraph("⏱️ Demora en Definición del Imprevisto", heading_style))
+
+            grafico_demora_buf = _generar_grafico_demora_definicion(df_demora)
+            if grafico_demora_buf:
+                elements.append(Image(grafico_demora_buf, width=6.5*inch, height=3*inch))
+                elements.append(Spacer(1, 10))
+
+            # Tabla resumen
+            demora_table_data = [[
+                Paragraph("<b>Compañía de Seguros</b>", body_style),
+                Paragraph("<b>Promedio Autorizado (días)</b>", body_style),
+                Paragraph("<b>Cant. Autorizados</b>", body_style),
+                Paragraph("<b>Promedio Rechazado (días)</b>", body_style),
+                Paragraph("<b>Cant. Rechazados</b>", body_style),
+            ]]
+
+            for _, row in df_demora.iterrows():
+                demora_table_data.append([
+                    Paragraph(str(row["COMPAÑIA_DE_SEGUROS"]), body_style),
+                    Paragraph(f"{row['promedio_demora_AUTORIZADO']:.1f}", body_style),
+                    Paragraph(f"{int(row['conteo_AUTORIZADO']):,}", body_style),
+                    Paragraph(f"{row['promedio_demora_RECHAZADO']:.1f}", body_style),
+                    Paragraph(f"{int(row['conteo_RECHAZADO']):,}", body_style),
+                ])
+
+            demora_table = Table(demora_table_data, colWidths=[2*inch, 1.1*inch, 1.1*inch, 1.1*inch, 1.1*inch])
+            demora_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#3B82F6")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 10),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#F8FAFC")),
+                ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#E2E8F0")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F1F5F9")]),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]))
+
+            elements.append(demora_table)
             elements.append(Spacer(1, 15))
         
         # =========================================================================

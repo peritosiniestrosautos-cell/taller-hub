@@ -476,7 +476,9 @@ def render_export_section(df_filtered, filtros, talleres_seleccionados=None):
             df_pdf, filtros_pdf,
             include_honorarios=include_honorarios,
             taller_nombre=taller_nombre,
-            filtros_graficos=filtros_graficos
+            filtros_graficos=filtros_graficos,
+            año=año_sel,
+            mes=mes_sel
         )
         honorarios_text = "con" if include_honorarios else "sin"
 
