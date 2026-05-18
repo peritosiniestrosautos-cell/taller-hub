@@ -528,6 +528,49 @@ def render_grafico_causales(df):
 
     df_filtrado_periodo = _filtrar_df_causales_por_periodo(df, tipo_periodo, periodo_sel)
     periodo_label = _period_label_from_key(tipo_periodo, periodo_sel)
+
+    # Filtros adicionales: Causal y Acción
+    filtro_causal_col, filtro_accion_col = st.columns(2)
+    with filtro_causal_col:
+        causales_disp = sorted(
+            df_filtrado_periodo['CAUSAL']
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .unique()
+        )
+        causales_disp = [c for c in causales_disp if c != '']
+        causales_sel = st.multiselect(
+            "Causal",
+            options=causales_disp,
+            default=[],
+            key="top_causales_causal",
+        )
+    with filtro_accion_col:
+        acciones_disp = sorted(
+            df_filtrado_periodo['ACCION']
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .unique()
+        ) if 'ACCION' in df_filtrado_periodo.columns else []
+        acciones_disp = [a for a in acciones_disp if a != '']
+        acciones_sel = st.multiselect(
+            "Acción",
+            options=acciones_disp,
+            default=[],
+            key="top_causales_accion",
+        )
+
+    if causales_sel:
+        df_filtrado_periodo = df_filtrado_periodo[
+            df_filtrado_periodo['CAUSAL'].isin(causales_sel)
+        ]
+    if acciones_sel and 'ACCION' in df_filtrado_periodo.columns:
+        df_filtrado_periodo = df_filtrado_periodo[
+            df_filtrado_periodo['ACCION'].isin(acciones_sel)
+        ]
+
     resumen_reporte, detalle_reporte = _preparar_reporte_top_causales_ahorro(
         df_filtrado_periodo,
         periodo_label,
