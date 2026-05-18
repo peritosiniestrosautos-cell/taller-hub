@@ -801,6 +801,111 @@ def render_tabla_detalle(df):
 
 
 # ============================================================================
+# HELPER: Filtros de Período Estándar
+# ============================================================================
+
+def _render_filtros_periodo(df, key_suffix="", mostrar_titulo=True):
+    """
+    Renderiza filtros de período estándar (Año, Trimestre, Mes) como multiselect.
+    Permite combinaciones como Q1+Q4 o años múltiples.
+    Retorna: (df_filtrado, filtros_aplicados_dict)
+    """
+    filtros_aplicados = {}
+
+    # Preparar datos de período
+    df_periodos = df.copy()
+    if 'AÑO' in df_periodos.columns:
+        df_periodos['_AÑO'] = pd.to_numeric(df_periodos['AÑO'], errors='coerce')
+    if 'MES' in df_periodos.columns:
+        df_periodos['_MES'] = pd.to_numeric(df_periodos['MES'], errors='coerce')
+
+    # Año multiselect
+    años_disponibles = []
+    if '_AÑO' in df_periodos.columns:
+        años_disponibles = sorted(
+            df_periodos['_AÑO'].dropna().astype(int).unique().tolist(),
+            reverse=True
+        )
+
+    trimestres_opciones = ["Q1", "Q2", "Q3", "Q4"]
+
+    meses_nombres = {
+        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
+        5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
+        9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
+    }
+
+    meses_disponibles = []
+    if '_MES' in df_periodos.columns:
+        meses_disponibles = sorted([
+            m for m in df_periodos['_MES'].dropna().astype(int).unique().tolist()
+            if 1 <= m <= 12
+        ])
+
+    if mostrar_titulo:
+        st.caption("🔍 Filtrar por período (combinaciones permitidas: Q1+Q4, 2024+2025, etc.)")
+
+    # Renderizar filtros en 3 columnas
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        años_sel = st.multiselect(
+            "📅 Años",
+            options=años_disponibles,
+            default=años_disponibles[:min(2, len(años_disponibles))] if años_disponibles else [],
+            key=f"filtro_años_{key_suffix}"
+        )
+
+    with col2:
+        trimestres_sel = st.multiselect(
+            "📊 Trimestres",
+            options=trimestres_opciones,
+            default=[],
+            help="Selecciona uno o varios trimestres (ej: Q1 y Q4)",
+            key=f"filtro_trimestres_{key_suffix}"
+        )
+
+    with col3:
+        meses_sel = st.multiselect(
+            "📆 Meses",
+            options=meses_disponibles,
+            format_func=lambda m: meses_nombres.get(m, str(m)),
+            default=[],
+            help="Selecciona uno o varios meses",
+            key=f"filtro_meses_{key_suffix}"
+        )
+
+    # Aplicar filtros
+    df_filtrado = df.copy()
+
+    if años_sel and 'AÑO' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['AÑO'].isin(años_sel)]
+        filtros_aplicados['Años'] = ', '.join(map(str, años_sel))
+
+    if trimestres_sel and 'MES' in df_filtrado.columns:
+        trimestre_map = {"Q1": [1, 2, 3], "Q2": [4, 5, 6], "Q3": [7, 8, 9], "Q4": [10, 11, 12]}
+        meses_trimestre = []
+        for t in trimestres_sel:
+            meses_trimestre.extend(trimestre_map.get(t, []))
+        df_filtrado = df_filtrado[df_filtrado['MES'].isin(meses_trimestre)]
+        filtros_aplicados['Trimestres'] = ', '.join(trimestres_sel)
+
+    if meses_sel and 'MES' in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado['MES'].isin(meses_sel)]
+        filtros_aplicados['Meses'] = ', '.join(meses_nombres.get(m, str(m)) for m in meses_sel)
+
+    return df_filtrado, filtros_aplicados
+
+
+def _generar_excel_simple(df, sheet_name="Datos"):
+    """Genera un archivo Excel simple con una o más hojas."""
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name=sheet_name, index=False)
+    return output.getvalue()
+
+
+# ============================================================================
 # RECUPERACIÓN MENSUAL
 # ============================================================================
 
@@ -808,18 +913,41 @@ def render_recuperacion_mensual(df):
     """
     RF-003.7: Tabla de recuperación mensual con % de honorarios (umbral dinámico por taller)
     """
-    st.subheader("📊 Recuperación Mensual con % de Honorarios")
+    if df is None or df.empty:
+        st.subheader("📊 Recuperación Mensual con % de Honorarios")
+        st.info("No hay datos disponibles.")
+        return
 
     if 'AÑO' not in df.columns or 'MES' not in df.columns:
+        st.subheader("📊 Recuperación Mensual con % de Honorarios")
+        st.warning("No se encontraron columnas de fecha.")
         return
+
+    # --- Filtros de período ---
+    title_col, action_col = st.columns([3, 2])
+    with title_col:
+        st.subheader("📊 Recuperación Mensual con % de Honorarios")
+
+    df_valid, filtros = _render_filtros_periodo(df, key_suffix="recuperacion")
 
     # Filtrar solo registros con AÑO y MES válidos
-    df_valid = df[(df['AÑO'].notna()) & (df['MES'].notna()) &
-                  (df['AÑO'] > 2000) & (df['MES'] >= 1) & (df['MES'] <= 12)]
+    df_valid = df_valid[(df_valid['AÑO'].notna()) & (df_valid['MES'].notna()) &
+                  (df_valid['AÑO'] > 2000) & (df_valid['MES'] >= 1) & (df_valid['MES'] <= 12)]
 
     if df_valid.empty:
-        st.warning("No hay datos con fechas válidas")
+        st.warning("No hay datos con fechas válidas para los filtros seleccionados.")
         return
+
+    # Botón de exportación
+    excel_data = _generar_excel_simple(df_valid, "Recuperación Mensual")
+    with action_col:
+        st.download_button(
+            label="📥 Descargar Excel",
+            data=excel_data,
+            file_name=f"recuperacion_mensual_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
     # Load fee configuration
     fee_config = load_fee_config()
@@ -977,36 +1105,67 @@ def render_efectividad_valoracion(df):
     que la Tasa de Imprevistos mensual, pero invertido:
     Eficiencia = (1 - tasa_imprevistos) = (1 - total_imprevistos / total_vehiculos) * 100
     """
-    st.subheader("📐 Efectividad en la Valoración")
-
     if df is None or df.empty:
+        st.subheader("📐 Efectividad en la Valoración")
         st.warning("No hay datos disponibles para calcular la efectividad de valoración.")
         return
 
     required_cols = {'AÑO', 'MES', 'PLACA'}
     if not required_cols.issubset(df.columns):
+        st.subheader("📐 Efectividad en la Valoración")
         st.warning("Faltan columnas requeridas (AÑO, MES, PLACA) para calcular la efectividad.")
         return
+
+    # --- Filtros de período ---
+    title_col, action_col = st.columns([3, 2])
+    with title_col:
+        st.subheader("📐 Efectividad en la Valoración")
+
+    df_filtros, filtros_info = _render_filtros_periodo(df, key_suffix="efectividad")
 
     # ------------------------------------------------------------------
     # 1. Obtener imprevistos mensuales (misma lógica que tasa de imprevistos)
     # ------------------------------------------------------------------
-    df_imp_mes = resumir_imprevistos_mensuales(df=df)
+    df_imp_mes = resumir_imprevistos_mensuales(df=df_filtros)
 
     if df_imp_mes.empty:
-        st.info("No se encontraron registros de imprevistos en los datos actuales.")
+        st.info("No se encontraron registros de imprevistos para los filtros seleccionados.")
         return
 
     # ------------------------------------------------------------------
     # 2. Total vehículos desde la hoja "TASA DE IMPREVISTOS"
     # ------------------------------------------------------------------
-    df_all = df.copy()
+    df_all = df_filtros.copy()
     df_all['año'] = pd.to_numeric(df_all['AÑO'], errors='coerce')
     df_all['mes'] = pd.to_numeric(df_all['MES'], errors='coerce')
 
     df_tasa_sheets = st.session_state.get("tasa_imprevistos_data")
     if df_tasa_sheets is not None and not df_tasa_sheets.empty:
-        df_vehiculos = df_tasa_sheets.groupby(['AÑO', 'MES']).agg(
+        df_tasa_filtered = df_tasa_sheets.copy()
+        # Aplicar mismos filtros de año/mes a los vehículos
+        if 'AÑO' in df_tasa_filtered.columns and filtros_info.get('Años'):
+            años_sel = [int(a) for a in filtros_info['Años'].split(', ')]
+            df_tasa_filtered = df_tasa_filtered[df_tasa_filtered['AÑO'].isin(años_sel)]
+        if 'MES' in df_tasa_filtered.columns:
+            meses_filtro = []
+            if filtros_info.get('Trimestres'):
+                trimestre_map = {"Q1": [1,2,3], "Q2": [4,5,6], "Q3": [7,8,9], "Q4": [10,11,12]}
+                for t in filtros_info['Trimestres'].split(', '):
+                    meses_filtro.extend(trimestre_map.get(t, []))
+            if filtros_info.get('Meses'):
+                meses_nombres_rev = {v: k for k, v in {
+                    1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
+                    5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
+                    9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
+                }.items()}
+                for nombre_mes in filtros_info['Meses'].split(', '):
+                    m_num = meses_nombres_rev.get(nombre_mes)
+                    if m_num and m_num not in meses_filtro:
+                        meses_filtro.append(m_num)
+            if meses_filtro:
+                df_tasa_filtered = df_tasa_filtered[df_tasa_filtered['MES'].isin(meses_filtro)]
+
+        df_vehiculos = df_tasa_filtered.groupby(['AÑO', 'MES']).agg(
             total_vehiculos=('TOTAL', 'sum')
         ).reset_index()
         df_vehiculos = df_vehiculos.rename(columns={'AÑO': 'año', 'MES': 'mes'})
@@ -1041,8 +1200,19 @@ def render_efectividad_valoracion(df):
     df_resumen = df_resumen.sort_values(['año', 'mes']).reset_index(drop=True)
 
     if df_resumen.empty:
-        st.warning("No se pudo construir la serie mensual de efectividad.")
+        st.warning("No se pudo construir la serie mensual de efectividad para los filtros seleccionados.")
         return
+
+    # Botón de exportación
+    excel_data = _generar_excel_simple(df_resumen, "Efectividad")
+    with action_col:
+        st.download_button(
+            label="📥 Descargar Excel",
+            data=excel_data,
+            file_name=f"efectividad_valoracion_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
     # ------------------------------------------------------------------
     # 4. KPIs resumen
@@ -1132,17 +1302,26 @@ def render_grafico_ahorro_por_compania(df):
     con columna de compañías, recuperado y porcentaje.
     """
     if df is None or df.empty:
+        st.subheader("🏢 Distribución de Ahorros por Compañía de Seguros")
         st.info("No hay datos para mostrar distribución por compañía de seguros.")
         return
 
     if 'COMPAÑIA_DE_SEGUROS' not in df.columns:
+        st.subheader("🏢 Distribución de Ahorros por Compañía de Seguros")
         st.warning("No se encontró la columna 'COMPAÑIA_DE_SEGUROS' en los datos.")
         return
 
+    # --- Filtros de período ---
+    title_col, action_col = st.columns([3, 2])
+    with title_col:
+        st.subheader("🏢 Distribución de Ahorros por Compañía de Seguros")
+
+    df_filtros, _ = _render_filtros_periodo(df, key_suffix="compania")
+
     # Filtrar solo registros autorizados para métricas de ahorro
-    df = filter_authorized_savings_records(df)
+    df = filter_authorized_savings_records(df_filtros)
     if df is None or df.empty:
-        st.info("No hay registros AUTORIZADO para mostrar distribución por compañía.")
+        st.info("No hay registros AUTORIZADO para mostrar distribución por compañía con los filtros seleccionados.")
         return
 
     # Agrupar por compañía de seguros y sumar la diferencia
@@ -1169,8 +1348,16 @@ def render_grafico_ahorro_por_compania(df):
     # Replicar colores si hay más compañías que colores
     color_list = [CHART_COLORS[i % len(CHART_COLORS)] for i in range(len(resumen))]
 
-    # Subtítulo
-    st.subheader("🏢 Distribución de Ahorros por Compañía de Seguros")
+    # Botón de exportación
+    excel_data = _generar_excel_simple(resumen, "Ahorro por Compañía")
+    with action_col:
+        st.download_button(
+            label="📥 Descargar Excel",
+            data=excel_data,
+            file_name=f"ahorro_por_compania_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
     # Gráfico de dona
     fig = go.Figure(data=[go.Pie(

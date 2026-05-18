@@ -237,20 +237,14 @@ def main():
     # =========================================================================
     # SECCIÓN: COMPARATIVO ANUAL (Año vs Año)
     # =========================================================================
-    # Usar datos sin filtros temporales (año/trimestre/mes) del sidebar global
-    # para que los filtros independientes del comparativo tengan control total
-    filtros_comp = filtros.copy()
-    filtros_comp['año'] = "Todos"
-    filtros_comp['trimestre'] = "Todos"
-    filtros_comp['mes'] = "Todos"
-    df_comp = aplicar_filtros(df, filtros_comp)
-
-    df_ahorro_autorizado = filter_authorized_savings_records(df_comp)
+    # Usar la data filtrada por el usuario para que el comparativo respete
+    # los filtros aplicados en el sidebar
+    df_ahorro_autorizado = filter_authorized_savings_records(df_filtered)
     if df_ahorro_autorizado is not None and not df_ahorro_autorizado.empty and 'AÑO' in df_ahorro_autorizado.columns:
         años_unicos = df_ahorro_autorizado['AÑO'].dropna().unique()
         if len(años_unicos) >= 1:
             st.subheader("📅 Comparativo Anual")
-            render_comparativo_anual(df_comp)
+            render_comparativo_anual(df_filtered)
 
             st.divider()
 

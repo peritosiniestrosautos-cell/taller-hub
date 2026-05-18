@@ -22,6 +22,7 @@ from reportlab.platypus.flowables import HRFlowable
 from .fee_config import load_fee_config, calculate_fees_per_month, format_currency
 from .imprevistos_processor import resumir_imprevistos_mensuales, extraer_imprevistos_from_dataframe
 from .data_loader import load_tasa_imprevistos_from_excel
+from .imprevistos_visualizations import CAUSALES_CULPA_TALLER
 
 import matplotlib
 matplotlib.use('Agg')
@@ -132,7 +133,11 @@ def _generar_grafico_tasa_imprevistos(df_tasa):
 
 
 def _preparar_cambio_repuestos_pdf(df, año=None, mes=None):
-    """Prepara el detalle de imprevistos con cambio de repuestos para el PDF."""
+    """Prepara el detalle de imprevistos con cambio de repuestos (culpa del taller) para el PDF.
+
+    Filtra por ACCION=CAMBIO y CAUSAL en CAUSALES_CULPA_TALLER para mantener
+    consistencia con el gráfico histórico del mismo reporte.
+    """
     columnas_reporte = ["PLACA", "LINEA", "CIA", "IMPREVISTO", "CAUSAL"]
 
     if df is None or df.empty:
@@ -158,6 +163,17 @@ def _preparar_cambio_repuestos_pdf(df, año=None, mes=None):
     if df_w.empty:
         return pd.DataFrame(columns=columnas_reporte)
 
+    # Solo incluir registros cuyo CAUSAL indica culpa del taller (igual que el gráfico)
+    df_w["_CAUSAL"] = (
+        df_w["CAUSAL"].astype(str).str.upper().str.strip()
+        if "CAUSAL" in df_w.columns
+        else ""
+    )
+    df_w = df_w[df_w["_CAUSAL"].isin(CAUSALES_CULPA_TALLER)].copy()
+
+    if df_w.empty:
+        return pd.DataFrame(columns=columnas_reporte)
+
     cia_col = (
         "COMPAÑIA_DE_SEGUROS"
         if "COMPAÑIA_DE_SEGUROS" in df_w.columns
@@ -179,18 +195,19 @@ def _preparar_cambio_repuestos_pdf(df, año=None, mes=None):
             if "IMPREVISTO" in df_w.columns
             else ""
         ),
-        "CAUSAL": (
-            df_w["CAUSAL"].astype(str).str.strip().str.upper()
-            if "CAUSAL" in df_w.columns
-            else ""
-        ),
+        "CAUSAL": df_w["_CAUSAL"],
     })
 
     return reporte.sort_values(["PLACA", "CIA", "IMPREVISTO"]).reset_index(drop=True)
 
 
 def _generar_grafico_cambio_repuestos(df):
-    """Genera un gráfico de barras con imprevistos con cambio de repuestos por mes."""
+    """Genera un gráfico de barras con imprevistos con cambio de repuestos (culpa del taller) por mes.
+
+    Muestra la misma métrica que el gráfico '🔧 Imprevistos con Cambio de Repuesto'
+    del dashboard: cantidad de registros con ACCION=CAMBIO cuyo CAUSAL indica
+    culpa del taller (CAUSALES_CULPA_TALLER).
+    """
     if df is None or df.empty or 'AÑO' not in df.columns or 'MES' not in df.columns or 'ACCION' not in df.columns:
         return None
 
@@ -209,7 +226,17 @@ def _generar_grafico_cambio_repuestos(df):
     if df_w.empty:
         return None
 
-    resumen = df_w.groupby(['_AÑO', '_MES']).size().reset_index(name='cantidad')
+    # Normalizar CAUSAL y calcular culpa del taller (misma lógica que el dashboard)
+    df_w['_CAUSAL'] = (
+        df_w['CAUSAL'].astype(str).str.upper().str.strip()
+        if 'CAUSAL' in df_w.columns
+        else ''
+    )
+    df_w['_CULPA'] = df_w['_CAUSAL'].isin(CAUSALES_CULPA_TALLER)
+
+    resumen = df_w.groupby(['_AÑO', '_MES']).agg(
+        cantidad=('_CULPA', 'sum')
+    ).reset_index()
     resumen = resumen.sort_values(['_AÑO', '_MES'])
 
     MESES_ES = {1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr', 5: 'May', 6: 'Jun',
@@ -289,10 +316,12 @@ def _calcular_comparativo_ahorro_pdf(df):
         lambda x: "▲ Aumentó" if x > 0 else ("▼ Disminuyó" if x < 0 else "● Sin cambio")
     )
 
-    # Comparativo trimestral
+    # Comparativo trimestral — Comparación homóloga (mismo trimestre, año anterior)
     df_trim = df_valid.copy()
     df_trim['TRIMESTRE'] = ((df_trim['MES'].astype(int) - 1) // 3 + 1)
     trimestral = df_trim.groupby(['AÑO', 'TRIMESTRE'])['DIFERENCIA'].sum().reset_index()
+    trimestral['AÑO'] = trimestral['AÑO'].astype(int)
+    trimestral['TRIMESTRE'] = trimestral['TRIMESTRE'].astype(int)
     trimestral = trimestral.sort_values(['AÑO', 'TRIMESTRE']).reset_index(drop=True)
 
     # Solo incluir trimestres con datos reales (> 0) para evitar falsos "disminuyó"
@@ -301,16 +330,37 @@ def _calcular_comparativo_ahorro_pdf(df):
     if len(trimestral) < 2:
         return resumen, trimestral
 
-    trimestral['ahorro_anterior'] = trimestral['DIFERENCIA'].shift(1)
-    trimestral['desviacion_pct'] = trimestral.apply(
-        lambda r: ((r['DIFERENCIA'] - r['ahorro_anterior']) / r['ahorro_anterior'] * 100)
-        if pd.notna(r['ahorro_anterior']) and r['ahorro_anterior'] != 0 else 0,
-        axis=1
-    ).round(1)
-    trimestral['periodo'] = trimestral.apply(
-        lambda r: f"Q{int(r['TRIMESTRE'])} {int(r['AÑO'])}", axis=1
+    # Para cada trimestre, buscar el mismo trimestre del año anterior
+    def _comparar_trimestre_homologo(row):
+        año_actual = row['AÑO']
+        trimestre = row['TRIMESTRE']
+        año_anterior = año_actual - 1
+
+        prev = trimestral[(trimestral['AÑO'] == año_anterior) & (trimestral['TRIMESTRE'] == trimestre)]
+        if prev.empty:
+            return pd.Series({
+                'ahorro_anterior': None,
+                'desviacion_pct': 0.0,
+                'periodo_anterior': None,
+                'tiene_comparativo': False
+            })
+
+        ahorro_ant = prev['DIFERENCIA'].values[0]
+        desv = ((row['DIFERENCIA'] - ahorro_ant) / ahorro_ant * 100) if ahorro_ant != 0 else 0.0
+        return pd.Series({
+            'ahorro_anterior': ahorro_ant,
+            'desviacion_pct': round(desv, 1),
+            'periodo_anterior': f"Q{trimestre} {año_anterior}",
+            'tiene_comparativo': True
+        })
+
+    trimestral[['ahorro_anterior', 'desviacion_pct', 'periodo_anterior', 'tiene_comparativo']] = (
+        trimestral.apply(_comparar_trimestre_homologo, axis=1)
     )
-    trimestral['periodo_anterior'] = trimestral['periodo'].shift(1)
+
+    # Filtrar solo trimestres que tengan un año anterior comparable
+    trimestral = trimestral[trimestral['tiene_comparativo']].copy()
+    trimestral['periodo'] = trimestral.apply(lambda r: f"Q{int(r['TRIMESTRE'])} {int(r['AÑO'])}", axis=1)
     trimestral['indicador'] = trimestral['desviacion_pct'].apply(
         lambda x: "▲ Aumentó" if x > 0 else ("▼ Disminuyó" if x < 0 else "● Sin cambio")
     )
@@ -452,9 +502,9 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
     # =========================================================================
     # HEADER DEL DOCUMENTO
     # =========================================================================
-    elements.append(Paragraph("🚗 TALLER HUB", title_style))
+    elements.append(Paragraph(f"🚗 {taller_nombre.upper()}", title_style))
     elements.append(
-        Paragraph("Sistema de Gestión de Ahorros y Análisis de Talleres Automotrices", subtitle_style)
+        Paragraph("Sistema de Gestión de recuperación de mano de obra e imprevistos", subtitle_style)
     )
     
     # Línea separadora
@@ -843,10 +893,10 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
             
             elements.append(comp_mes_table)
             elements.append(Spacer(1, 10))
-            
-            # Tabla trimestral
-            if not comparativo_trim.empty and len(comparativo_trim) >= 2:
-                elements.append(Paragraph("Comparativo Trimestral", subheading_style))
+
+            # Tabla trimestral — comparación homóloga (mismo trimestre, año anterior)
+            if not comparativo_trim.empty and len(comparativo_trim) >= 1:
+                elements.append(Paragraph("Comparativo Trimestral (Homólogo)", subheading_style))
                 comp_trim_data = [[
                     Paragraph("<b>Período</b>", body_style),
                     Paragraph("<b>Ahorro</b>", body_style),
@@ -854,7 +904,7 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
                     Paragraph("<b>% Desviación</b>", body_style),
                     Paragraph("<b>Tendencia</b>", body_style),
                 ]]
-                
+
                 for _, row in comparativo_trim.iterrows():
                     desv_color = colors.HexColor('#16A34A') if row['desviacion_pct'] > 0 else (
                         colors.HexColor('#DC2626') if row['desviacion_pct'] < 0 else colors.HexColor('#64748B')
@@ -868,7 +918,7 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
                             'Tendencia', parent=body_style, textColor=desv_color, fontName='Helvetica-Bold'
                         )),
                     ])
-                
+
                 comp_trim_table = Table(comp_trim_data, colWidths=[1.2*inch, 1.4*inch, 1.4*inch, 1.2*inch, 1.3*inch])
                 comp_trim_table.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3B82F6')),
@@ -882,7 +932,7 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
                     ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F1F5F9')]),
                     ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                 ]))
-                
+
                 elements.append(comp_trim_table)
                 elements.append(Spacer(1, 15))
         

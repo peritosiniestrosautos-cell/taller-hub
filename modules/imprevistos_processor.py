@@ -144,7 +144,7 @@ def extraer_imprevistos_from_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df_imprevistos
 
 
-def resumir_imprevistos_mensuales(df: pd.DataFrame, año: int = None) -> pd.DataFrame:
+def resumir_imprevistos_mensuales(df: pd.DataFrame, año: int = None, años: list = None, meses: list = None) -> pd.DataFrame:
     """
     Resume imprevistos por mes con reglas consistentes para los gráficos:
     - No se filtra por ACCION ni CAUSAL
@@ -165,6 +165,11 @@ def resumir_imprevistos_mensuales(df: pd.DataFrame, año: int = None) -> pd.Data
 
     if año is not None:
         df_work = df_work[df_work['año'] == año].copy()
+    elif años is not None and len(años) > 0:
+        df_work = df_work[df_work['año'].isin(años)].copy()
+
+    if meses is not None and len(meses) > 0:
+        df_work = df_work[df_work['mes'].isin(meses)].copy()
 
     if df_work.empty:
         return pd.DataFrame(columns=['año', 'mes', 'total_imprevistos', 'culpa_taller'])

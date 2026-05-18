@@ -47,11 +47,16 @@ def _format_month_year_label(mes, año) -> str:
 # HELPER: Cargar datos de vehículos desde TASA DE IMPREVISTOS
 # ============================================================================
 
-def _get_vehiculos_por_mes(año: int = None) -> pd.DataFrame:
+def _get_vehiculos_por_mes(año: int = None, años: list = None, meses: list = None) -> pd.DataFrame:
     """
     Obtiene el total de vehículos entregados por mes desde la hoja
     'TASA DE IMPREVISTOS'. Primero busca en session_state; si no está,
     carga directamente desde el archivo Excel local.
+    
+    Args:
+        año: Filtrar por un año específico (legacy)
+        años: Filtrar por múltiples años
+        meses: Filtrar por múltiples meses
     
     Returns:
         DataFrame con columnas: año, mes, total_vehiculos
@@ -67,8 +72,13 @@ def _get_vehiculos_por_mes(año: int = None) -> pd.DataFrame:
         return pd.DataFrame(columns=['año', 'mes', 'total_vehiculos'])
     
     df_tasa_filtered = df_tasa_sheets.copy()
-    if año:
+    if años is not None and len(años) > 0:
+        df_tasa_filtered = df_tasa_filtered[df_tasa_filtered['AÑO'].isin(años)]
+    elif año:
         df_tasa_filtered = df_tasa_filtered[df_tasa_filtered['AÑO'] == año]
+    
+    if meses is not None and len(meses) > 0:
+        df_tasa_filtered = df_tasa_filtered[df_tasa_filtered['MES'].isin(meses)]
     
     df_vehiculos = df_tasa_filtered.groupby(['AÑO', 'MES']).agg(
         total_vehiculos=('TOTAL', 'sum')
@@ -77,6 +87,87 @@ def _get_vehiculos_por_mes(año: int = None) -> pd.DataFrame:
     df_vehiculos['año'] = pd.to_numeric(df_vehiculos['año'], errors='coerce').astype(int)
     df_vehiculos['mes'] = pd.to_numeric(df_vehiculos['mes'], errors='coerce').astype(int)
     return df_vehiculos
+
+
+# ============================================================================
+# HELPER: Filtros de Período para Imprevistos
+# ============================================================================
+
+def _render_filtros_periodo_imprevistos(df, key_suffix=""):
+    """
+    Renderiza filtros de período estándar (Año, Trimestre, Mes) como multiselect.
+    Retorna: (años_sel, trimestres_sel, meses_sel, meses_filtro)
+    """
+    df_periodos = df.copy()
+    if 'AÑO' in df_periodos.columns:
+        df_periodos['_AÑO'] = pd.to_numeric(df_periodos['AÑO'], errors='coerce')
+    if 'MES' in df_periodos.columns:
+        df_periodos['_MES'] = pd.to_numeric(df_periodos['MES'], errors='coerce')
+
+    años_disponibles = sorted(
+        df_periodos['_AÑO'].dropna().astype(int).unique().tolist(),
+        reverse=True
+    ) if '_AÑO' in df_periodos.columns else []
+
+    trimestres_opciones = ["Q1", "Q2", "Q3", "Q4"]
+
+    meses_disponibles = sorted([
+        m for m in df_periodos['_MES'].dropna().astype(int).unique().tolist()
+        if 1 <= m <= 12
+    ]) if '_MES' in df_periodos.columns else []
+
+    meses_nombres = {
+        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
+        5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
+        9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
+    }
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        años_sel = st.multiselect(
+            "📅 Años",
+            options=años_disponibles,
+            default=años_disponibles[:min(2, len(años_disponibles))] if años_disponibles else [],
+            key=f"imp_filtro_años_{key_suffix}"
+        )
+
+    with col2:
+        trimestres_sel = st.multiselect(
+            "📊 Trimestres",
+            options=trimestres_opciones,
+            default=[],
+            help="Selecciona uno o varios trimestres (ej: Q1 y Q4)",
+            key=f"imp_filtro_trimestres_{key_suffix}"
+        )
+
+    with col3:
+        meses_sel = st.multiselect(
+            "📆 Meses",
+            options=meses_disponibles,
+            format_func=lambda m: meses_nombres.get(m, str(m)),
+            default=[],
+            help="Selecciona uno o varios meses",
+            key=f"imp_filtro_meses_{key_suffix}"
+        )
+
+    # Calcular meses a filtrar basado en trimestres + meses individuales
+    meses_filtro = list(meses_sel) if meses_sel else []
+    trimestre_map = {"Q1": [1, 2, 3], "Q2": [4, 5, 6], "Q3": [7, 8, 9], "Q4": [10, 11, 12]}
+    for t in trimestres_sel:
+        for m in trimestre_map.get(t, []):
+            if m not in meses_filtro:
+                meses_filtro.append(m)
+
+    return años_sel, trimestres_sel, meses_sel, meses_filtro
+
+
+def _generar_excel_simple(df, sheet_name="Datos"):
+    """Genera un archivo Excel simple."""
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name=sheet_name, index=False)
+    return output.getvalue()
 
 
 # ============================================================================
@@ -93,55 +184,80 @@ def render_grafico_tasa_imprevistos_nuevo(
     Gráfico simple de línea: tasa de imprevistos mensual (%).
     """
     
-    st.subheader("📊 Tasa de Imprevistos Mensual")
-    
+    title_col, action_col = st.columns([3, 2])
+    with title_col:
+        st.subheader("📊 Tasa de Imprevistos Mensual")
+
     if df is None or df.empty:
         st.info("No hay datos disponibles para mostrar.")
         return
-    
+
+    # --- Filtros de período ---
+    años_sel, trimestres_sel, meses_sel, meses_filtro = _render_filtros_periodo_imprevistos(
+        df, key_suffix=f"tasa_{key_suffix}"
+    )
+
     from .imprevistos_processor import extraer_imprevistos_from_dataframe
-    
+
     df_imprevistos = extraer_imprevistos_from_dataframe(df)
-    
+
     if df_imprevistos.empty:
         st.info("No se encontraron registros de imprevistos en los datos actuales.")
         st.caption("💡 Los imprevistos se detectan cuando ACCION='CAMBIO' o IMPREVISTO no está vacío")
         return
-    
+
     if 'AÑO' in df.columns and 'MES' in df.columns:
-        df_imp_mes = resumir_imprevistos_mensuales(df=df, año=año)
-        
-        df_vehiculos = _get_vehiculos_por_mes(año=año)
-        
+        df_imp_mes = resumir_imprevistos_mensuales(
+            df=df,
+            años=años_sel if años_sel else None,
+            meses=meses_filtro if meses_filtro else None
+        )
+
+        df_vehiculos = _get_vehiculos_por_mes(
+            años=años_sel if años_sel else None,
+            meses=meses_filtro if meses_filtro else None
+        )
+
         if df_vehiculos.empty:
             st.warning("⚠️ No se encontraron datos de la hoja 'TASA DE IMPREVISTOS'. No se puede calcular la tasa sin el total de vehículos.")
             return
-        
+
         df_resumen = df_vehiculos.merge(df_imp_mes, on=['año', 'mes'], how='outer')
         df_resumen['total_vehiculos'] = df_resumen['total_vehiculos'].fillna(0).astype(int)
         df_resumen['total_imprevistos'] = df_resumen['total_imprevistos'].fillna(0).astype(int)
-        
+
         df_resumen['tasa'] = df_resumen.apply(
             lambda r: (r['total_imprevistos'] / r['total_vehiculos'] * 100) if r['total_vehiculos'] > 0 else 0,
             axis=1
         ).round(1)
-        
+
         df_resumen["mes_nombre"] = df_resumen.apply(
             lambda row: datetime(int(row["año"]), int(row["mes"]), 1).strftime('%b %Y'),
             axis=1
         )
-        
+
         df_resumen = df_resumen.sort_values(['año', 'mes'])
     else:
         st.warning("No se encontraron columnas de fecha (AÑO/MES) en los datos.")
         return
-    
+
     if df_resumen.empty:
         st.info("No hay datos para el período seleccionado.")
         return
-    
+
+    # Botón de exportación
+    excel_data = _generar_excel_simple(df_resumen, "Tasa de Imprevistos")
+    with action_col:
+        st.download_button(
+            label="📥 Descargar Excel",
+            data=excel_data,
+            file_name=f"tasa_imprevistos_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
     fig = go.Figure()
-    
+
     fig.add_trace(
         go.Scatter(
             x=df_resumen["mes_nombre"],
@@ -153,17 +269,17 @@ def render_grafico_tasa_imprevistos_nuevo(
             hovertemplate='%{x}: %{y}%<extra></extra>',
         )
     )
-    
+
     fig.update_layout(
         title='Tasa de Imprevistos Mensual',
         height=ChartHeights.XLARGE,
         hovermode='x unified',
         margin=dict(t=50, b=20, l=20, r=20),
     )
-    
+
     fig.update_xaxes(title_text="")
     fig.update_yaxes(title_text="Tasa (%)", ticksuffix="%")
-    
+
     for _, row in df_resumen.iterrows():
         fig.add_annotation(
             x=row["mes_nombre"],
@@ -173,7 +289,7 @@ def render_grafico_tasa_imprevistos_nuevo(
             yshift=10,
             font=dict(size=10, color=BrandColors.PRIMARY)
         )
-    
+
     st.plotly_chart(fig, width="stretch", use_container_width=True)
 
 
