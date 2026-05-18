@@ -51,8 +51,8 @@ def _get_default_talleres() -> Dict[str, dict]:
     return {
         "taller_1": {
             "id": "taller_1",
-            "nombre": "Taller Principal",
-            "sheet_url": "https://docs.google.com/spreadsheets/d/13sR-FFPIasaY0xlkpmcZnyLJfCVKGUNNoK4RFO6R6pY/edit",
+            "nombre": "Distrikia",
+            "sheet_url": "https://docs.google.com/spreadsheets/d/1WgrIeUkrmvgecDP5hKaOtXjrmxsGdjSzMrari4LbvAI/edit?gid=0#gid=0",
             "activo": True,
             "color": BrandColors.PRIMARY,
         }

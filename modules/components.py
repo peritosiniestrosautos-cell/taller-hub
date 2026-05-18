@@ -35,7 +35,7 @@ def render_header(talleres_seleccionados: List[str] = None):
     with col_title:
         st.markdown(f'<div class="main-header">🚗 {taller_nombre.upper()}</div>', unsafe_allow_html=True)
         st.markdown(
-            '<div class="sub-header">Sistema de Gestión de Ahorros y Análisis de Talleres Automotrices</div>',
+            '<div class="sub-header">Sistema de Gestión de recuperación de mano de obra e imprevistos</div>',
             unsafe_allow_html=True
         )
 
