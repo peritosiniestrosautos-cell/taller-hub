@@ -263,30 +263,26 @@ def main():
     # =========================================================================
     # SECCIÓN: RECUPERACIÓN MENSUAL + EFECTIVIDAD
     # =========================================================================
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        render_recuperacion_mensual(df_filtered)
+    render_recuperacion_mensual(df_filtered)
 
-    with col2:
-        render_efectividad_valoracion(df_filtered)
+    st.divider()
+
+    render_efectividad_valoracion(df_filtered)
 
     st.divider()
 
     # =========================================================================
     # SECCIÓN: TASA DE IMPREVISTOS
     # =========================================================================
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        render_grafico_tasa_imprevistos_nuevo(
-            df=df_filtered,
-            taller_id=None,
-            año=None
-        )
+    render_grafico_tasa_imprevistos_nuevo(
+        df=df_filtered,
+        taller_id=None,
+        año=None
+    )
 
-    with col2:
-        render_grafico_culpa_taller_mensual(df=df_filtered)
+    st.divider()
+
+    render_grafico_culpa_taller_mensual(df=df_filtered)
 
     st.divider()
 

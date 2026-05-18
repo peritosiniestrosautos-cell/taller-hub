@@ -16,5 +16,5 @@
       "premium_percentage": 0.2
     }
   },
-  "hide_fees_presentation": false
+  "hide_fees_presentation": true
 }

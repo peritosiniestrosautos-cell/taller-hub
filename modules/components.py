@@ -196,7 +196,91 @@ def _capturar_filtros_graficos():
             }
     except Exception:
         pass
-    
+
+    # 4. Filtros de Recuperación Mensual
+    try:
+        años_rec = st.session_state.get("filtro_años_recuperacion")
+        trim_rec = st.session_state.get("filtro_trimestres_recuperacion")
+        mes_rec = st.session_state.get("filtro_meses_recuperacion")
+        if any(v for v in [años_rec, trim_rec, mes_rec]):
+            filtros_graficos["Recuperación Mensual"] = {
+                "Años": ', '.join(map(str, años_rec)) if años_rec else "Todos",
+                "Trimestres": ', '.join(trim_rec) if trim_rec else "Todos",
+                "Meses": ', '.join(map(str, mes_rec)) if mes_rec else "Todos",
+            }
+    except Exception:
+        pass
+
+    # 5. Filtros de Efectividad en la Valoración
+    try:
+        años_ef = st.session_state.get("filtro_años_efectividad")
+        trim_ef = st.session_state.get("filtro_trimestres_efectividad")
+        mes_ef = st.session_state.get("filtro_meses_efectividad")
+        if any(v for v in [años_ef, trim_ef, mes_ef]):
+            filtros_graficos["Efectividad en la Valoración"] = {
+                "Años": ', '.join(map(str, años_ef)) if años_ef else "Todos",
+                "Trimestres": ', '.join(trim_ef) if trim_ef else "Todos",
+                "Meses": ', '.join(map(str, mes_ef)) if mes_ef else "Todos",
+            }
+    except Exception:
+        pass
+
+    # 6. Filtros de Ahorro por Compañía
+    try:
+        años_comp = st.session_state.get("filtro_años_compania")
+        trim_comp = st.session_state.get("filtro_trimestres_compania")
+        mes_comp = st.session_state.get("filtro_meses_compania")
+        if any(v for v in [años_comp, trim_comp, mes_comp]):
+            filtros_graficos["Ahorro por Compañía"] = {
+                "Años": ', '.join(map(str, años_comp)) if años_comp else "Todos",
+                "Trimestres": ', '.join(trim_comp) if trim_comp else "Todos",
+                "Meses": ', '.join(map(str, mes_comp)) if mes_comp else "Todos",
+            }
+    except Exception:
+        pass
+
+    # 7. Filtros de Tasa de Imprevistos
+    try:
+        años_tasa = st.session_state.get("imp_filtro_años_tasa_")
+        trim_tasa = st.session_state.get("imp_filtro_trimestres_tasa_")
+        mes_tasa = st.session_state.get("imp_filtro_meses_tasa_")
+        if any(v for v in [años_tasa, trim_tasa, mes_tasa]):
+            filtros_graficos["Tasa de Imprevistos"] = {
+                "Años": ', '.join(map(str, años_tasa)) if años_tasa else "Todos",
+                "Trimestres": ', '.join(trim_tasa) if trim_tasa else "Todos",
+                "Meses": ', '.join(map(str, mes_tasa)) if mes_tasa else "Todos",
+            }
+    except Exception:
+        pass
+
+    # 8. Filtros de Tabla Resumen Imprevistos
+    try:
+        años_tab = st.session_state.get("imp_filtro_años_tabla_resumen")
+        trim_tab = st.session_state.get("imp_filtro_trimestres_tabla_resumen")
+        mes_tab = st.session_state.get("imp_filtro_meses_tabla_resumen")
+        if any(v for v in [años_tab, trim_tab, mes_tab]):
+            filtros_graficos["Tabla Resumen Imprevistos"] = {
+                "Años": ', '.join(map(str, años_tab)) if años_tab else "Todos",
+                "Trimestres": ', '.join(trim_tab) if trim_tab else "Todos",
+                "Meses": ', '.join(map(str, mes_tab)) if mes_tab else "Todos",
+            }
+    except Exception:
+        pass
+
+    # 9. Filtros de Ranking de Talleres
+    try:
+        años_rank = st.session_state.get("filtro_años_ranking")
+        trim_rank = st.session_state.get("filtro_trimestres_ranking")
+        mes_rank = st.session_state.get("filtro_meses_ranking")
+        if any(v for v in [años_rank, trim_rank, mes_rank]):
+            filtros_graficos["Ranking de Talleres"] = {
+                "Años": ', '.join(map(str, años_rank)) if años_rank else "Todos",
+                "Trimestres": ', '.join(trim_rank) if trim_rank else "Todos",
+                "Meses": ', '.join(map(str, mes_rank)) if mes_rank else "Todos",
+            }
+    except Exception:
+        pass
+
     return filtros_graficos
 
 

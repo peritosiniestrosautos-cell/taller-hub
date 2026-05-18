@@ -193,6 +193,8 @@ def render_grafico_tasa_imprevistos_nuevo(
         return
 
     # --- Filtros de período ---
+    header_container = st.container()
+
     años_sel, trimestres_sel, meses_sel, meses_filtro = _render_filtros_periodo_imprevistos(
         df, key_suffix=f"tasa_{key_suffix}"
     )
@@ -242,19 +244,25 @@ def render_grafico_tasa_imprevistos_nuevo(
         return
 
     if df_resumen.empty:
+        with header_container:
+            st.subheader("📊 Tasa de Imprevistos Mensual")
         st.info("No hay datos para el período seleccionado.")
         return
 
     # Botón de exportación
     excel_data = _generar_excel_simple(df_resumen, "Tasa de Imprevistos")
-    with action_col:
-        st.download_button(
-            label="📥 Descargar Excel",
-            data=excel_data,
-            file_name=f"tasa_imprevistos_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+    with header_container:
+        title_col, action_col = st.columns([3, 2])
+        with title_col:
+            st.subheader("📊 Tasa de Imprevistos Mensual")
+        with action_col:
+            st.download_button(
+                label="📥 Descargar Excel",
+                data=excel_data,
+                file_name=f"tasa_imprevistos_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
 
     fig = go.Figure()
 
@@ -308,34 +316,48 @@ def render_tabla_resumen_imprevistos(
     Plus fault classification breakdown.
     Uses 'TASA DE IMPREVISTOS' sheet for vehicle counts.
     """
-    
-    st.subheader("📋 Tabla Resumen Mensual")
-    
+
+    header_container = st.container()
+
     if df is None or df.empty:
+        with header_container:
+            st.subheader("📋 Tabla Resumen Mensual")
         st.info("No hay datos disponibles.")
         return
-    
+
+    # --- Filtros de período ---
+    años_sel, trimestres_sel, meses_sel, meses_filtro = _render_filtros_periodo_imprevistos(
+        df, key_suffix="tabla_resumen"
+    )
+
     from .imprevistos_processor import extraer_imprevistos_from_dataframe
-    
+
     df_imprevistos = extraer_imprevistos_from_dataframe(df)
-    
+
     if df_imprevistos.empty:
         st.info("No se encontraron registros de imprevistos.")
         return
-    
+
     # Get monthly data
     if 'AÑO' in df.columns and 'MES' in df.columns:
-        if año:
+        if año and not años_sel:
             df_imprevistos = df_imprevistos[df_imprevistos['año'] == año]
-        
-        df_imp_mes = resumir_imprevistos_mensuales(df=df, año=año)
-        
-        df_vehiculos = _get_vehiculos_por_mes(año=año)
-        
+
+        df_imp_mes = resumir_imprevistos_mensuales(
+            df=df,
+            años=años_sel if años_sel else ([año] if año else None),
+            meses=meses_filtro if meses_filtro else None
+        )
+
+        df_vehiculos = _get_vehiculos_por_mes(
+            años=años_sel if años_sel else ([año] if año else None),
+            meses=meses_filtro if meses_filtro else None
+        )
+
         if df_vehiculos.empty:
             st.warning("⚠️ No se encontraron datos de la hoja 'TASA DE IMPREVISTOS'. No se puede calcular la tasa sin el total de vehículos.")
             return
-        
+
         df_resumen = df_vehiculos.merge(df_imp_mes, on=['año', 'mes'], how='outer')
         df_resumen['total_vehiculos'] = df_resumen['total_vehiculos'].fillna(0).astype(int)
         df_resumen['total_imprevistos'] = df_resumen['total_imprevistos'].fillna(0).astype(int)
@@ -352,18 +374,35 @@ def render_tabla_resumen_imprevistos(
     else:
         st.warning("No hay datos de fecha disponibles.")
         return
-    
+
     if df_resumen.empty:
+        with header_container:
+            st.subheader("📋 Tabla Resumen Mensual")
         st.info("No hay datos para el período seleccionado.")
         return
-    
+
+    # Botón de exportación
+    excel_data = _generar_excel_simple(df_resumen, "Resumen Mensual")
+    with header_container:
+        title_col, action_col = st.columns([3, 2])
+        with title_col:
+            st.subheader("📋 Tabla Resumen Mensual")
+        with action_col:
+            st.download_button(
+                label="📥 Descargar Excel",
+                data=excel_data,
+                file_name=f"resumen_imprevistos_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+
     # Create display DataFrame
     df_display = df_resumen[[
         "mes_nombre", "total_vehiculos", "total_imprevistos",
         "culpa_taller", "no_culpa_taller",
         "tasa", "tasa_culpa_taller", "tasa_no_culpa_taller"
     ]].copy()
-    
+
     df_display = df_display.rename(columns={
         "mes_nombre": "Mes",
         "total_vehiculos": "Cantidad Vehículos",
@@ -374,11 +413,11 @@ def render_tabla_resumen_imprevistos(
         "tasa_culpa_taller": "Tasa Culpa Taller (%)",
         "tasa_no_culpa_taller": "Tasa No Culpa Taller (%)"
     })
-    
+
     # Format percentages
     for col in ["Tasa Total (%)", "Tasa Culpa Taller (%)", "Tasa No Culpa Taller (%)"]:
         df_display[col] = df_display[col].apply(lambda x: f"{x:.1f}%")
-    
+
     # Display table
     st.dataframe(
         df_display,

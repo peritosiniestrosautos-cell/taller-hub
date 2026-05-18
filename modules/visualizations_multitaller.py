@@ -11,6 +11,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from datetime import datetime
 
 from .config import PORCENTAJE_HONORARIOS
 from .taller_config import get_taller_config, get_talleres_disponibles
@@ -20,6 +21,7 @@ from .theme import (
     BrandColors, SemanticColors, GrayScale, ChartHeights, TALLER_COLORS,
     get_plotly_theme, get_chart_color, hex_with_opacity
 )
+from .visualizations import _render_filtros_periodo, _generar_excel_simple
 
 
 def _get_taller_color(taller_name: str) -> str:
@@ -135,16 +137,23 @@ def render_ranking_talleres(df):
     if df is None or df.empty or "TALLER_ORIGEN" not in df.columns:
         return
 
-    df = filter_authorized_savings_records(df)
+    st.divider()
+    header_container = st.container()
+
+    # --- Filtros de período ---
+    df_filtros, _ = _render_filtros_periodo(df, key_suffix="ranking")
+
+    df = filter_authorized_savings_records(df_filtros)
     if df is None or df.empty:
+        with header_container:
+            st.subheader("🏆 Ranking de Talleres")
         return
     
     talleres = df["TALLER_ORIGEN"].unique()
     if len(talleres) <= 1:
+        with header_container:
+            st.subheader("🏆 Ranking de Talleres")
         return
-    
-    st.divider()
-    st.subheader("🏆 Ranking de Talleres")
     
     # Calcular métricas
     resumen = df.groupby("TALLER_ORIGEN").agg({
@@ -153,6 +162,21 @@ def render_ranking_talleres(df):
     }).reset_index()
     
     resumen.columns = ["TALLER", "AHORRO_TOTAL", "AHORRO_PROMEDIO", "REPARACIONES"]
+
+    # Botón de exportación
+    excel_data = _generar_excel_simple(resumen, "Ranking Talleres")
+    with header_container:
+        title_col, action_col = st.columns([3, 2])
+        with title_col:
+            st.subheader("🏆 Ranking de Talleres")
+        with action_col:
+            st.download_button(
+                label="📥 Descargar Excel",
+                data=excel_data,
+                file_name=f"ranking_talleres_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
     
     col1, col2, col3 = st.columns(3)
     

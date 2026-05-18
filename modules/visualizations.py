@@ -913,6 +913,12 @@ def render_recuperacion_mensual(df):
     """
     RF-003.7: Tabla de recuperación mensual con % de honorarios (umbral dinámico por taller)
     """
+    # Modo presentación: ocultar completamente este gráfico
+    fee_config = load_fee_config()
+    hide_fees = fee_config.get('hide_fees_presentation', False)
+    if hide_fees:
+        return
+
     if df is None or df.empty:
         st.subheader("📊 Recuperación Mensual con % de Honorarios")
         st.info("No hay datos disponibles.")
@@ -924,9 +930,7 @@ def render_recuperacion_mensual(df):
         return
 
     # --- Filtros de período ---
-    title_col, action_col = st.columns([3, 2])
-    with title_col:
-        st.subheader("📊 Recuperación Mensual con % de Honorarios")
+    header_container = st.container()
 
     df_valid, filtros = _render_filtros_periodo(df, key_suffix="recuperacion")
 
@@ -935,24 +939,26 @@ def render_recuperacion_mensual(df):
                   (df_valid['AÑO'] > 2000) & (df_valid['MES'] >= 1) & (df_valid['MES'] <= 12)]
 
     if df_valid.empty:
+        with header_container:
+            st.subheader("📊 Recuperación Mensual con % de Honorarios")
         st.warning("No hay datos con fechas válidas para los filtros seleccionados.")
         return
 
     # Botón de exportación
     excel_data = _generar_excel_simple(df_valid, "Recuperación Mensual")
-    with action_col:
-        st.download_button(
-            label="📥 Descargar Excel",
-            data=excel_data,
-            file_name=f"recuperacion_mensual_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+    with header_container:
+        title_col, action_col = st.columns([3, 2])
+        with title_col:
+            st.subheader("📊 Recuperación Mensual con % de Honorarios")
+        with action_col:
+            st.download_button(
+                label="📥 Descargar Excel",
+                data=excel_data,
+                file_name=f"recuperacion_mensual_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
 
-    # Load fee configuration
-    fee_config = load_fee_config()
-    hide_fees = fee_config.get('hide_fees_presentation', False)
-    
     # Determine if multitaller
     es_multitaller = 'TALLER_ORIGEN' in df_valid.columns
 
@@ -1117,9 +1123,7 @@ def render_efectividad_valoracion(df):
         return
 
     # --- Filtros de período ---
-    title_col, action_col = st.columns([3, 2])
-    with title_col:
-        st.subheader("📐 Efectividad en la Valoración")
+    header_container = st.container()
 
     df_filtros, filtros_info = _render_filtros_periodo(df, key_suffix="efectividad")
 
@@ -1129,6 +1133,8 @@ def render_efectividad_valoracion(df):
     df_imp_mes = resumir_imprevistos_mensuales(df=df_filtros)
 
     if df_imp_mes.empty:
+        with header_container:
+            st.subheader("📐 Efectividad en la Valoración")
         st.info("No se encontraron registros de imprevistos para los filtros seleccionados.")
         return
 
@@ -1172,6 +1178,8 @@ def render_efectividad_valoracion(df):
         df_vehiculos['año'] = df_vehiculos['año'].astype(int)
         df_vehiculos['mes'] = df_vehiculos['mes'].astype(int)
     else:
+        with header_container:
+            st.subheader("📐 Efectividad en la Valoración")
         st.warning("⚠️ No se encontraron datos de la hoja 'TASA DE IMPREVISTOS'. No se puede calcular la efectividad sin el total de vehículos.")
         return
 
@@ -1200,19 +1208,25 @@ def render_efectividad_valoracion(df):
     df_resumen = df_resumen.sort_values(['año', 'mes']).reset_index(drop=True)
 
     if df_resumen.empty:
+        with header_container:
+            st.subheader("📐 Efectividad en la Valoración")
         st.warning("No se pudo construir la serie mensual de efectividad para los filtros seleccionados.")
         return
 
     # Botón de exportación
     excel_data = _generar_excel_simple(df_resumen, "Efectividad")
-    with action_col:
-        st.download_button(
-            label="📥 Descargar Excel",
-            data=excel_data,
-            file_name=f"efectividad_valoracion_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+    with header_container:
+        title_col, action_col = st.columns([3, 2])
+        with title_col:
+            st.subheader("📐 Efectividad en la Valoración")
+        with action_col:
+            st.download_button(
+                label="📥 Descargar Excel",
+                data=excel_data,
+                file_name=f"efectividad_valoracion_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
 
     # ------------------------------------------------------------------
     # 4. KPIs resumen
@@ -1312,15 +1326,15 @@ def render_grafico_ahorro_por_compania(df):
         return
 
     # --- Filtros de período ---
-    title_col, action_col = st.columns([3, 2])
-    with title_col:
-        st.subheader("🏢 Distribución de Ahorros por Compañía de Seguros")
+    header_container = st.container()
 
     df_filtros, _ = _render_filtros_periodo(df, key_suffix="compania")
 
     # Filtrar solo registros autorizados para métricas de ahorro
     df = filter_authorized_savings_records(df_filtros)
     if df is None or df.empty:
+        with header_container:
+            st.subheader("🏢 Distribución de Ahorros por Compañía de Seguros")
         st.info("No hay registros AUTORIZADO para mostrar distribución por compañía con los filtros seleccionados.")
         return
 
@@ -1337,6 +1351,8 @@ def render_grafico_ahorro_por_compania(df):
     resumen = resumen.sort_values('DIFERENCIA', ascending=False)
 
     if resumen.empty:
+        with header_container:
+            st.subheader("🏢 Distribución de Ahorros por Compañía de Seguros")
         st.info("No hay datos de ahorro por compañía de seguros.")
         return
 
@@ -1350,14 +1366,18 @@ def render_grafico_ahorro_por_compania(df):
 
     # Botón de exportación
     excel_data = _generar_excel_simple(resumen, "Ahorro por Compañía")
-    with action_col:
-        st.download_button(
-            label="📥 Descargar Excel",
-            data=excel_data,
-            file_name=f"ahorro_por_compania_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+    with header_container:
+        title_col, action_col = st.columns([3, 2])
+        with title_col:
+            st.subheader("🏢 Distribución de Ahorros por Compañía de Seguros")
+        with action_col:
+            st.download_button(
+                label="📥 Descargar Excel",
+                data=excel_data,
+                file_name=f"ahorro_por_compania_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
 
     # Gráfico de dona
     fig = go.Figure(data=[go.Pie(
