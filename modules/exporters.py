@@ -98,6 +98,91 @@ def _calcular_tasa_imprevistos_pdf(df):
     return df_resumen
 
 
+def _generar_grafico_ahorro_mes(df):
+    """Genera un gráfico de barras con el ahorro por mes."""
+    try:
+        if df is None or df.empty or 'AÑO' not in df.columns or 'MES' not in df.columns or 'DIFERENCIA' not in df.columns:
+            return None
+
+        # Asegurar que DIFERENCIA sea numérico
+        df_work = df.copy()
+        df_work['DIFERENCIA'] = pd.to_numeric(df_work['DIFERENCIA'], errors='coerce').fillna(0)
+
+        # Filtrar filas con AÑO/MES válidos (igual que la tabla del PDF)
+        df_work = df_work[df_work['AÑO'].notna() & df_work['MES'].notna()].copy()
+        if df_work.empty:
+            return None
+
+        # Agrupar (igual que la tabla del PDF)
+        df_mes = df_work.groupby(['AÑO', 'MES'])['DIFERENCIA'].sum().reset_index()
+        if df_mes.empty:
+            return None
+
+        # Ordenar
+        df_mes = df_mes.sort_values(['AÑO', 'MES'])
+
+        meses_es = {
+            1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr', 5: 'May', 6: 'Jun',
+            7: 'Jul', 8: 'Ago', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'
+        }
+
+        def _fmt_label(r):
+            try:
+                m = int(float(r['MES']))
+                a = int(float(r['AÑO']))
+                return f"{meses_es.get(m, str(m))} {a}"
+            except (ValueError, TypeError):
+                return f"{r['MES']} {r['AÑO']}"
+
+        df_mes['mes_label'] = df_mes.apply(_fmt_label, axis=1)
+
+        fig, ax = plt.subplots(figsize=(6.5, 3))
+        bars = ax.bar(df_mes['mes_label'], df_mes['DIFERENCIA'], color='#3B82F6', edgecolor='white', linewidth=1.2)
+
+        # Etiquetas encima de cada barra (en millones como el comparativo anual)
+        for bar in bars:
+            height = bar.get_height()
+            if abs(height) >= 1000000:
+                label = f'${height/1000000:.1f}M'
+            elif abs(height) >= 1000:
+                label = f'${height/1000:.0f}k'
+            else:
+                label = f'${height:,.0f}'
+            ax.annotate(label,
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 5),
+                        textcoords="offset points",
+                        ha='center', va='bottom',
+                        fontsize=7, color='#1E40AF', fontweight='bold')
+
+        ax.set_title('Ahorro por Mes', fontsize=12, fontweight='bold', color='#1E293B', pad=15)
+        ax.set_ylabel('Ahorro (millones $)', fontsize=9, color='#64748B')
+        ax.tick_params(axis='x', rotation=45, labelsize=8, colors='#64748B')
+        ax.tick_params(axis='y', labelsize=8, colors='#64748B')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_color('#E2E8F0')
+        ax.spines['bottom'].set_color('#E2E8F0')
+        ax.grid(axis='y', linestyle='--', alpha=0.4, color='#CBD5E1')
+        ax.set_axisbelow(True)
+        # Formatear eje Y en millones
+        import matplotlib.ticker as mticker
+        ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'${x/1000000:.1f}M'))
+        fig.tight_layout()
+
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight',
+                    facecolor='white', edgecolor='none')
+        img_buffer.seek(0)
+        plt.close(fig)
+        return img_buffer
+    except Exception as e:
+        print(f"[PDF] Error generando gráfico de ahorro por mes: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def _generar_grafico_tasa_imprevistos(df_tasa):
     """Genera un gráfico de línea con la tasa de imprevistos mensual."""
     if df_tasa is None or df_tasa.empty:
@@ -1029,6 +1114,12 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
         # =========================================================================
         if 'AÑO' in df.columns and 'MES' in df.columns:
             elements.append(Paragraph("📅 Ahorro por Mes", heading_style))
+
+            # Gráfico
+            grafico_ahorro_buf = _generar_grafico_ahorro_mes(df)
+            if grafico_ahorro_buf:
+                elements.append(Image(grafico_ahorro_buf, width=6.5*inch, height=3*inch))
+                elements.append(Spacer(1, 10))
             
             resumen_mes = df.groupby(['AÑO', 'MES']).agg({
                 'DIFERENCIA': ['sum', 'mean', 'count']
