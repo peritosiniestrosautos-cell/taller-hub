@@ -306,6 +306,131 @@ def render_grafico_ahorro_mes(df):
 
 
 # ============================================================================
+# GRÁFICO DE AHORRO POR MES (CON FILTROS Y DESCARGA)
+# ============================================================================
+
+def render_grafico_ahorro_mes_nuevo(df=None, key_suffix=""):
+    """
+    Gráfico de ahorro por mes con filtros de período y botón de descarga Excel.
+    """
+    if df is None or df.empty:
+        st.info("No hay datos disponibles para mostrar.")
+        return
+
+    if 'AÑO' not in df.columns or 'MES' not in df.columns:
+        st.warning("Datos de fecha incompletos para gráfico mensual")
+        return
+
+    df_aut = filter_authorized_savings_records(df)
+    if df_aut is None or df_aut.empty:
+        st.info("No hay registros AUTORIZADO para construir el gráfico de ahorro.")
+        return
+
+    header_container = st.container()
+
+    df_filtrado, filtros_aplicados = _render_filtros_periodo(
+        df_aut, key_suffix=f"ahorro_mes_{key_suffix}", mostrar_titulo=False
+    )
+
+    # Agrupar por año/mes
+    df_mes = df_filtrado.groupby(['AÑO', 'MES']).agg({
+        'DIFERENCIA': 'sum',
+        'PLACA': 'nunique'
+    }).reset_index()
+
+    # Asegurar tipos numéricos
+    df_mes['AÑO'] = pd.to_numeric(df_mes['AÑO'], errors='coerce')
+    df_mes['MES'] = pd.to_numeric(df_mes['MES'], errors='coerce')
+    df_mes = df_mes.dropna(subset=['AÑO', 'MES'])
+    df_mes['AÑO'] = df_mes['AÑO'].astype(int)
+    df_mes['MES'] = df_mes['MES'].astype(int)
+
+    # Crear etiqueta de mes
+    df_mes['mes_nombre'] = df_mes.apply(
+        lambda row: datetime(int(row['AÑO']), int(row['MES']), 1).strftime('%b %Y'),
+        axis=1
+    )
+    df_mes = df_mes.sort_values(['AÑO', 'MES'])
+
+    if df_mes.empty:
+        with header_container:
+            st.subheader("💰 Ahorro por Mes")
+        st.info("No hay datos para el período seleccionado.")
+        return
+
+    # Botón de exportación
+    excel_data = _generar_excel_simple(df_mes, "Ahorro por Mes")
+    with header_container:
+        title_col, action_col = st.columns([3, 2])
+        with title_col:
+            st.subheader("💰 Ahorro por Mes")
+        with action_col:
+            st.download_button(
+                label="📥 Descargar Excel",
+                data=excel_data,
+                file_name=f"ahorro_por_mes_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+
+    # Gráfico
+    chart_type = get_chart_type_for_id('ahorro_mes')
+    fig = go.Figure()
+
+    if chart_type == CHART_TYPE_BAR:
+        textos = []
+        for v in df_mes['DIFERENCIA']:
+            if pd.isna(v):
+                textos.append('')
+            elif abs(v) >= 1000000:
+                textos.append(f'{v/1000000:.1f}M')
+            else:
+                textos.append(f'{v/1000:.1f}k')
+
+        fig.add_trace(go.Bar(
+            x=df_mes['mes_nombre'],
+            y=df_mes['DIFERENCIA'],
+            name='Ahorro Mensual',
+            marker_color=BrandColors.PRIMARY,
+            marker_line_width=0,
+            text=textos,
+            textposition='outside',
+            textfont=dict(size=13, color='white', family='Inter')
+        ))
+    else:
+        fig.add_trace(go.Scatter(
+            x=df_mes['mes_nombre'],
+            y=df_mes['DIFERENCIA'],
+            mode='lines+markers',
+            name='Ahorro Mensual',
+            line=dict(color=BrandColors.PRIMARY, width=3),
+            marker=dict(size=8, color=BrandColors.SECONDARY, line=dict(width=2, color='white')),
+            fill='tozeroy',
+            fillcolor=hex_to_plotly_fill(BrandColors.PRIMARY, 0.1)
+        ))
+
+        if len(df_mes) > 2:
+            fig.add_trace(go.Scatter(
+                x=df_mes['mes_nombre'],
+                y=df_mes['DIFERENCIA'].rolling(window=3, min_periods=1).mean(),
+                mode='lines',
+                name='Tendencia (media móvil)',
+                line=dict(color=BrandColors.ACCENT, width=2, dash='dash')
+            ))
+
+    theme = get_plotly_theme(
+        title=None,
+        height=ChartHeights.LARGE,
+    )
+    theme["margin"] = {"l": 60, "r": 20, "t": 50, "b": 60}
+    fig.update_layout(**theme)
+    fig.update_xaxes(title_text='Mes')
+    fig.update_yaxes(title_text='Ahorro ($)', tickformat='$,.0f')
+
+    st.plotly_chart(fig, width='stretch')
+
+
+# ============================================================================
 # GRÁFICO DE CAUSALES
 # ============================================================================
 

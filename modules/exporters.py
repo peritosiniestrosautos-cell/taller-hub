@@ -1246,44 +1246,6 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
             elements.append(Spacer(1, 15))
     
     # =========================================================================
-    # FILTROS APLICADOS A GRÁFICOS
-    # =========================================================================
-    if filtros_graficos and any(v for v in filtros_graficos.values()):
-        elements.append(Paragraph("⚙️ Filtros Aplicados a Gráficos", heading_style))
-        
-        filtros_graf_data = [[
-            Paragraph("<b>Gráfico</b>", body_style),
-            Paragraph("<b>Filtros</b>", body_style),
-        ]]
-        
-        for grafico, filtros in filtros_graficos.items():
-            if filtros:
-                filtros_str = ", ".join([f"{k}: {v}" for k, v in filtros.items() if v])
-                if filtros_str:
-                    filtros_graf_data.append([
-                        Paragraph(str(grafico), body_style),
-                        Paragraph(filtros_str, body_style),
-                    ])
-        
-        if len(filtros_graf_data) > 1:
-            filtros_graf_table = Table(filtros_graf_data, colWidths=[2*inch, 4.5*inch])
-            filtros_graf_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3B82F6')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 9),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F8FAFC')),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#E2E8F0')),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F1F5F9')]),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ]))
-            
-            elements.append(filtros_graf_table)
-            elements.append(Spacer(1, 15))
-    
-    # =========================================================================
     # FOOTER
     # =========================================================================
     elements.append(Spacer(1, 30))

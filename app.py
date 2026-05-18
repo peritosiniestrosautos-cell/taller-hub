@@ -30,7 +30,8 @@ from modules.visualizations import (
     render_tabla_detalle,
     render_recuperacion_mensual,
     render_efectividad_valoracion,
-    render_grafico_ahorro_por_compania
+    render_grafico_ahorro_por_compania,
+    render_grafico_ahorro_mes_nuevo
 )
 
 # Importar visualizaciones de imprevistos
@@ -247,6 +248,13 @@ def main():
             render_comparativo_anual(df_filtered)
 
             st.divider()
+
+    # =========================================================================
+    # SECCIÓN: AHORRO POR MES
+    # =========================================================================
+    render_grafico_ahorro_mes_nuevo(df_filtered)
+
+    st.divider()
 
     # =========================================================================
     # SECCIÓN: GRÁFICOS

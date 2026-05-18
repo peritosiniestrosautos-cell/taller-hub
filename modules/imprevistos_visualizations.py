@@ -184,10 +184,6 @@ def render_grafico_tasa_imprevistos_nuevo(
     Gráfico simple de línea: tasa de imprevistos mensual (%).
     """
     
-    title_col, action_col = st.columns([3, 2])
-    with title_col:
-        st.subheader("📊 Tasa de Imprevistos Mensual")
-
     if df is None or df.empty:
         st.info("No hay datos disponibles para mostrar.")
         return
@@ -279,7 +275,7 @@ def render_grafico_tasa_imprevistos_nuevo(
     )
 
     fig.update_layout(
-        title='Tasa de Imprevistos Mensual',
+        title=None,
         height=ChartHeights.XLARGE,
         hovermode='x unified',
         margin=dict(t=50, b=20, l=20, r=20),
