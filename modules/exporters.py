@@ -24,6 +24,28 @@ from .imprevistos_processor import resumir_imprevistos_mensuales, extraer_imprev
 from .data_loader import load_tasa_imprevistos_from_excel
 from .imprevistos_visualizations import CAUSALES_CULPA_TALLER
 from .date_utils import parse_source_date_column
+from .data_processor import filter_authorized_savings_records
+from .pdf_styles import CONTENT_WIDTH
+from .pdf_executive_helpers import (
+    build_kpi_row, build_executive_table, build_section_title,
+    build_body_paragraph, build_bullet_list, build_hallazgo_box,
+    build_conclusion_paragraph, build_sub_section_title,
+)
+from .pdf_charts import (
+    generar_grafico_imprevistos_ejecutivo,
+    generar_grafico_tasa_ejecutivo,
+    generar_grafico_ahorro_comparativo_ejecutivo,
+    generar_grafico_ahorro_mes_ejecutivo,
+)
+from .pdf_narrative import (
+    narrativa_corte_y_saludo, narrativa_introduccion,
+    narrativa_ahorros_generados, narrativa_gestion_imprevistos,
+    narrativa_imprevistos_cambio_detalle, narrativa_tasa_imprevistos,
+    narrativa_ahorro_por_mes, narrativa_comparativo_anual,
+    narrativa_ahorro_trimestre, narrativa_causales,
+    narrativa_no_cotizados, narrativa_cambio_piezas,
+    narrativa_conclusion,
+)
 
 import matplotlib
 matplotlib.use('Agg')
@@ -1429,6 +1451,580 @@ def generate_excel_report(df, filtros_aplicados, taller_nombre="Taller Hub"):
 
     output.seek(0)
     return output
+
+
+# =============================================================================
+# HELPERS PRIVADOS — INFORME EJECUTIVO
+# =============================================================================
+
+
+def _exec_get_month_name(mes):
+    """Retorna el nombre del mes en español."""
+    MESES_ES = {
+        1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+        5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+        9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+    }
+    return MESES_ES.get(int(mes), str(mes))
+
+
+def _exec_add_narrative(elements, narrative_result):
+    """Extiende elements con el resultado de una función narrativa."""
+    if narrative_result is None:
+        return
+    if isinstance(narrative_result, list):
+        elements.extend(narrative_result)
+    else:
+        elements.append(narrative_result)
+
+
+def _exec_prepare_df_historico_cambio(df):
+    """Prepara DataFrame con historial completo de imprevistos con cambio de repuestos.
+
+    Usa la MISMA lógica que _generar_grafico_cambio_repuestos y el dashboard:
+    cuenta registros con ACCION=CAMBIO cuyo CAUSAL indica culpa del taller
+    (CAUSALES_CULPA_TALLER).
+    """
+    if df is None or df.empty or 'AÑO' not in df.columns or 'MES' not in df.columns or 'ACCION' not in df.columns:
+        return pd.DataFrame()
+    df_w = df.copy()
+    df_w['_ACCION'] = df_w['ACCION'].astype(str).str.upper().str.strip()
+    df_w = df_w[df_w['_ACCION'].str.contains('CAMBIO', na=False)]
+    if df_w.empty:
+        return pd.DataFrame()
+    df_w['_AÑO'] = pd.to_numeric(df_w['AÑO'], errors='coerce')
+    df_w['_MES'] = pd.to_numeric(df_w['MES'], errors='coerce')
+    df_w = df_w[(df_w['_AÑO'].notna()) & (df_w['_MES'].notna()) &
+                (df_w['_AÑO'] > 2000) & (df_w['_MES'] >= 1) & (df_w['_MES'] <= 12)]
+    if df_w.empty:
+        return pd.DataFrame()
+
+    # Filtrar solo causales de culpa del taller (igual que el dashboard)
+    df_w['_CAUSAL'] = (
+        df_w['CAUSAL'].astype(str).str.upper().str.strip()
+        if 'CAUSAL' in df_w.columns
+        else ''
+    )
+    df_w['_CULPA'] = df_w['_CAUSAL'].isin(CAUSALES_CULPA_TALLER)
+
+    resumen = df_w.groupby(['_AÑO', '_MES']).agg(
+        cantidad=('_CULPA', 'sum')
+    ).reset_index()
+    resumen = resumen.sort_values(['_AÑO', '_MES'])
+    MESES_ES = {
+        1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr', 5: 'May', 6: 'Jun',
+        7: 'Jul', 8: 'Ago', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'
+    }
+    resumen['periodo'] = resumen.apply(
+        lambda r: f"{MESES_ES.get(int(r['_MES']), str(int(r['_MES'])))} {int(r['_AÑO'])}", axis=1
+    )
+    return resumen[['periodo', 'cantidad']]
+
+
+def _exec_prepare_df_mensual_ahorro(df):
+    """Prepara DataFrame de ahorro por mes para narrativa y gráficos."""
+    if df is None or df.empty or 'AÑO' not in df.columns or 'MES' not in df.columns or 'DIFERENCIA' not in df.columns:
+        return pd.DataFrame()
+    df_w = df.copy()
+    df_w['DIFERENCIA'] = pd.to_numeric(df_w['DIFERENCIA'], errors='coerce').fillna(0)
+    df_w['AÑO'] = pd.to_numeric(df_w['AÑO'], errors='coerce')
+    df_w['MES'] = pd.to_numeric(df_w['MES'], errors='coerce')
+    df_w = df_w[(df_w['AÑO'].notna()) & (df_w['MES'].notna()) &
+                (df_w['AÑO'] > 2000) & (df_w['MES'] >= 1) & (df_w['MES'] <= 12)]
+    if df_w.empty:
+        return pd.DataFrame()
+    resumen = df_w.groupby(['AÑO', 'MES'])['DIFERENCIA'].sum().reset_index()
+    resumen = resumen.sort_values(['AÑO', 'MES'])
+    MESES_ES = {
+        1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr', 5: 'May', 6: 'Jun',
+        7: 'Jul', 8: 'Ago', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'
+    }
+    resumen['periodo'] = resumen.apply(
+        lambda r: f"{MESES_ES.get(int(r['MES']), str(int(r['MES'])))} {int(r['AÑO'])}", axis=1
+    )
+    return resumen
+
+
+def _exec_prepare_comparativo_anual_2025_2026(df):
+    """Prepara comparativo anual 2025 vs 2026 por mes."""
+    if df is None or df.empty or 'AÑO' not in df.columns or 'MES' not in df.columns or 'DIFERENCIA' not in df.columns:
+        return pd.DataFrame()
+    df_w = df.copy()
+    df_w['DIFERENCIA'] = pd.to_numeric(df_w['DIFERENCIA'], errors='coerce').fillna(0)
+    df_w['AÑO'] = pd.to_numeric(df_w['AÑO'], errors='coerce')
+    df_w['MES'] = pd.to_numeric(df_w['MES'], errors='coerce')
+    df_w = df_w[(df_w['AÑO'].isin([2025, 2026])) & (df_w['MES'] >= 1) & (df_w['MES'] <= 12)]
+    if df_w.empty:
+        return pd.DataFrame()
+    pivot = df_w.pivot_table(index='MES', columns='AÑO', values='DIFERENCIA', aggfunc='sum', fill_value=0).reset_index()
+    if 2025 not in pivot.columns:
+        pivot[2025] = 0
+    if 2026 not in pivot.columns:
+        pivot[2026] = 0
+    total_2025 = pivot[2025].sum()
+    total_2026 = pivot[2026].sum()
+    MESES_ES = {
+        1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+        5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+        9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+    }
+    pivot['MES_NOMBRE'] = pivot['MES'].apply(lambda m: MESES_ES.get(int(m), str(int(m))))
+    pivot['PCT_2025'] = pivot[2025].apply(lambda x: round((x / total_2025 * 100), 1) if total_2025 > 0 else 0.0)
+    pivot['PCT_2026'] = pivot[2026].apply(lambda x: round((x / total_2026 * 100), 1) if total_2026 > 0 else 0.0)
+    pivot['TOTAL'] = pivot[2025] + pivot[2026]
+    pivot['VARIACION'] = pivot.apply(
+        lambda r: round(((r[2026] - r[2025]) / r[2025] * 100), 1) if r[2025] != 0 else 0.0, axis=1
+    )
+    return pivot[['MES_NOMBRE', 2025, 'PCT_2025', 2026, 'PCT_2026', 'TOTAL', 'VARIACION']]
+
+
+def _exec_prepare_trimestral_2025_2026(df, año, mes):
+    """Prepara tabla trimestral comparando 2025 vs 2026 para el trimestre del mes dado."""
+    if df is None or df.empty or 'AÑO' not in df.columns or 'MES' not in df.columns or 'DIFERENCIA' not in df.columns:
+        return pd.DataFrame(), 0.0
+    trimestre = ((int(mes) - 1) // 3) + 1
+    meses_trim = list(range((trimestre - 1) * 3 + 1, trimestre * 3 + 1))
+    df_w = df.copy()
+    df_w['DIFERENCIA'] = pd.to_numeric(df_w['DIFERENCIA'], errors='coerce').fillna(0)
+    df_w['AÑO'] = pd.to_numeric(df_w['AÑO'], errors='coerce')
+    df_w['MES'] = pd.to_numeric(df_w['MES'], errors='coerce')
+    df_w = df_w[(df_w['AÑO'].isin([2025, 2026])) & (df_w['MES'].isin(meses_trim))]
+    if df_w.empty:
+        return pd.DataFrame(), 0.0
+    resumen = df_w.groupby(['AÑO', 'MES'])['DIFERENCIA'].sum().reset_index()
+    pivot = resumen.pivot_table(index='MES', columns='AÑO', values='DIFERENCIA', fill_value=0).reset_index()
+    if 2025 not in pivot.columns:
+        pivot[2025] = 0
+    if 2026 not in pivot.columns:
+        pivot[2026] = 0
+    MESES_ES = {
+        1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+        5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+        9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+    }
+    pivot['MES_NOMBRE'] = pivot['MES'].apply(lambda m: MESES_ES.get(int(m), str(int(m))))
+    pivot['TOTAL'] = pivot[2025] + pivot[2026]
+    pivot['VARIACION'] = pivot.apply(
+        lambda r: round(((r[2026] - r[2025]) / r[2025] * 100), 1) if r[2025] != 0 else 0.0, axis=1
+    )
+    total_2025 = pivot[2025].sum()
+    total_2026 = pivot[2026].sum()
+    variacion = round(((total_2026 - total_2025) / total_2025 * 100), 1) if total_2025 != 0 else 0.0
+    return pivot, variacion
+
+
+def _exec_prepare_causales_dinero(df):
+    """Prepara causales con recuperación de dinero."""
+    if df is None or df.empty or 'CAUSAL' not in df.columns or 'DIFERENCIA' not in df.columns:
+        return pd.DataFrame()
+    df_w = df.copy()
+    df_w['DIFERENCIA'] = pd.to_numeric(df_w['DIFERENCIA'], errors='coerce').fillna(0)
+    df_w = df_w[df_w['CAUSAL'].notna() & (df_w['CAUSAL'].astype(str).str.strip() != '')]
+    if df_w.empty:
+        return pd.DataFrame()
+    resumen = df_w.groupby('CAUSAL')['DIFERENCIA'].sum().reset_index()
+    resumen.columns = ['CAUSAL', 'RECUPERACION']
+    total = resumen['RECUPERACION'].sum()
+    resumen['PCT'] = resumen['RECUPERACION'].apply(lambda x: round((x / total * 100), 1) if total > 0 else 0.0)
+    resumen = resumen.sort_values('RECUPERACION', ascending=False).reset_index(drop=True)
+    return resumen
+
+
+def _exec_prepare_no_cotizados(df):
+    """Prepara datos de acciones no cotizadas."""
+    if df is None or df.empty or 'ACCION' not in df.columns or 'DIFERENCIA' not in df.columns:
+        return pd.DataFrame()
+    df_w = df.copy()
+    df_w['_ACCION'] = df_w['ACCION'].astype(str).str.upper().str.strip()
+    df_w = df_w[df_w['_ACCION'].str.contains('NO COTIZ', na=False)]
+    if df_w.empty:
+        return pd.DataFrame()
+    df_w['DIFERENCIA'] = pd.to_numeric(df_w['DIFERENCIA'], errors='coerce').fillna(0)
+    resumen = df_w.groupby('ACCION')['DIFERENCIA'].sum().reset_index()
+    resumen.columns = ['ACCION', 'RECUPERACION']
+    total = resumen['RECUPERACION'].sum()
+    resumen['PCT'] = resumen['RECUPERACION'].apply(lambda x: round((x / total * 100), 1) if total > 0 else 0.0)
+    resumen = resumen.sort_values('RECUPERACION', ascending=False).reset_index(drop=True)
+    return resumen
+
+
+def _exec_prepare_cambio_piezas(df):
+    """Prepara datos de cambio de piezas con dinero."""
+    if df is None or df.empty or 'ACCION' not in df.columns or 'CAUSAL' not in df.columns:
+        return pd.DataFrame()
+    df_w = df.copy()
+    df_w['_ACCION'] = df_w['ACCION'].astype(str).str.upper().str.strip()
+    df_w = df_w[df_w['_ACCION'].str.contains('CAMBIO', na=False)]
+    if df_w.empty:
+        return pd.DataFrame()
+    df_w['DIFERENCIA'] = pd.to_numeric(df_w['DIFERENCIA'], errors='coerce').fillna(0)
+    resumen = df_w.groupby('CAUSAL').agg(
+        CANTIDAD=('CAUSAL', 'size'),
+        DINERO=('DIFERENCIA', 'sum')
+    ).reset_index()
+    total_cantidad = resumen['CANTIDAD'].sum()
+    resumen['PCT'] = resumen['CANTIDAD'].apply(
+        lambda x: round((x / total_cantidad * 100), 1) if total_cantidad > 0 else 0.0
+    )
+    resumen = resumen.sort_values('DINERO', ascending=False).reset_index(drop=True)
+    return resumen
+
+
+# =============================================================================
+# GENERAR INFORME EJECUTIVO PDF
+# =============================================================================
+
+def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller_nombre="Distrikia"):
+    """
+    Genera un PDF ejecutivo tipo informe mensual (similar al PDF de referencia del cliente).
+
+    Args:
+        df: DataFrame con todos los datos (puede ser acumulado hasta el mes).
+        mes: int (1-12)
+        año: int
+        include_honorarios: bool
+        taller_nombre: str
+
+    Returns:
+        io.BytesIO con el PDF
+    """
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=0.75 * inch,
+        leftMargin=0.75 * inch,
+        topMargin=0.75 * inch,
+        bottomMargin=0.75 * inch
+    )
+    elements = []
+
+    mes_nombre = _exec_get_month_name(mes)
+
+    # ------------------------------------------------------------------
+    # Preparación de datos comunes
+    # ------------------------------------------------------------------
+    df_ahorro = filter_authorized_savings_records(df) if 'ESTATUS' in df.columns else df
+    total_ahorro = df_ahorro['DIFERENCIA'].sum() if 'DIFERENCIA' in df_ahorro.columns else 0
+
+    honorarios = 0
+    if include_honorarios and 'DIFERENCIA' in df_ahorro.columns:
+        try:
+            fee_config = load_fee_config()
+            fee_info = calculate_fees_per_month(df_ahorro, fee_config)
+            honorarios = fee_info.get('total_honorarios', 0) if fee_info else 0
+        except Exception:
+            honorarios = 0
+
+    utilidad = total_ahorro - honorarios
+
+    # Imprevistos del mes
+    df_imp_mes = resumir_imprevistos_mensuales(df=df, año=año, meses=[mes])
+    total_imprevistos_mes = int(df_imp_mes['total_imprevistos'].sum()) if not df_imp_mes.empty else 0
+
+    # Cambio de repuestos del mes (culpa del taller)
+    df_cambio_mes = _preparar_cambio_repuestos_pdf(df, año, mes)
+    cambios_count = len(df_cambio_mes) if not df_cambio_mes.empty else 0
+
+    # Tasa histórica
+    df_tasa_historico = _calcular_tasa_imprevistos_pdf(df)
+    tasa_actual = 0.0
+    tasa_anterior = 0.0
+    vehiculos_entregados = 0
+    total_imprevistos_tasa = 0
+    if not df_tasa_historico.empty:
+        df_tasa_historico = df_tasa_historico.sort_values(['año', 'mes']).reset_index(drop=True)
+        df_tasa_actual = df_tasa_historico[
+            (df_tasa_historico['año'] == int(año)) & (df_tasa_historico['mes'] == int(mes))
+        ]
+        if not df_tasa_actual.empty:
+            tasa_actual = df_tasa_actual['tasa'].values[0]
+            vehiculos_entregados = int(df_tasa_actual['total_vehiculos'].values[0])
+            total_imprevistos_tasa = int(df_tasa_actual['total_imprevistos'].values[0])
+            idx = df_tasa_actual.index[0]
+            if idx > 0:
+                tasa_anterior = df_tasa_historico.loc[idx - 1, 'tasa']
+
+    # Ahorro mensual
+    df_mensual = _exec_prepare_df_mensual_ahorro(df)
+
+    # Comparativo anual 2025 vs 2026
+    comparativo_df = _exec_prepare_comparativo_anual_2025_2026(df)
+
+    # Trimestral 2025 vs 2026
+    trimestral_df, variacion_trimestral_pct = _exec_prepare_trimestral_2025_2026(df, año, mes)
+
+    # Causales con dinero
+    df_causales_dinero = _exec_prepare_causales_dinero(df)
+
+    # No cotizados
+    df_no_cotizado = _exec_prepare_no_cotizados(df)
+
+    # Cambio de piezas
+    df_cambio = _exec_prepare_cambio_piezas(df)
+
+    # ======================================================================
+    # PÁGINA 1 — Portada + Introducción + KPIs + Gestión Imprevistos
+    # ======================================================================
+    _exec_add_narrative(elements, narrativa_corte_y_saludo(mes_nombre, año))
+    elements.append(Spacer(1, 12))
+    _exec_add_narrative(elements, narrativa_introduccion(mes_nombre, año, total_ahorro, honorarios, utilidad))
+    elements.append(Spacer(1, 12))
+
+    # KPIs
+    kpi_cards = [
+        {"label": "Ahorro Acumulado", "value": format_currency(total_ahorro), "icon": "💰"},
+    ]
+    if include_honorarios:
+        kpi_cards.append({"label": "Valor Honorarios", "value": format_currency(honorarios), "icon": "📊"})
+    kpi_cards.append({"label": "Utilidad Taller", "value": format_currency(utilidad), "icon": "✅"})
+    elements.append(build_kpi_row(kpi_cards))
+    elements.append(Spacer(1, 16))
+
+    _exec_add_narrative(elements, narrativa_ahorros_generados(total_ahorro, honorarios, utilidad))
+    elements.append(Spacer(1, 8))
+    _exec_add_narrative(elements, narrativa_gestion_imprevistos(total_imprevistos_mes, cambios_count))
+    elements.append(Spacer(1, 12))
+
+    # Gráfico imprevistos histórico
+    df_historico_cambio = _exec_prepare_df_historico_cambio(df)
+    if not df_historico_cambio.empty:
+        buf_imp = generar_grafico_imprevistos_ejecutivo(df_historico_cambio)
+        if buf_imp:
+            elements.append(Image(buf_imp, width=6.5 * inch, height=3.25 * inch))
+    else:
+        elements.append(build_body_paragraph("No hay datos históricos de imprevistos con cambio de repuestos."))
+
+    # No forzar salto de página; dejar que el contenido fluya naturalmente
+    elements.append(Spacer(1, 16))
+
+    # ======================================================================
+    # PÁGINA 2 — Detalle Imprevistos + Tasa
+    # ======================================================================
+    _exec_add_narrative(elements, narrativa_imprevistos_cambio_detalle(df_cambio_mes))
+    elements.append(Spacer(1, 10))
+
+    # Tabla imprevistos del mes
+    if not df_cambio_mes.empty and all(c in df_cambio_mes.columns for c in ['PLACA', 'CIA', 'IMPREVISTO', 'CAUSAL']):
+        tabla_data = df_cambio_mes[['PLACA', 'CIA', 'IMPREVISTO', 'CAUSAL']].astype(str).values.tolist()
+        elements.append(build_executive_table(
+            tabla_data,
+            ['PLACA', 'CIA', 'IMPREVISTO', 'CAUSAL']
+        ))
+    else:
+        elements.append(build_body_paragraph("No hay imprevistos con cambio de repuestos para el mes en curso."))
+
+    elements.append(Spacer(1, 12))
+    _exec_add_narrative(elements, narrativa_tasa_imprevistos(tasa_actual, tasa_anterior, vehiculos_entregados, total_imprevistos_tasa))
+    elements.append(Spacer(1, 10))
+
+    # Gráfico tasa
+    if not df_tasa_historico.empty:
+        buf_tasa = generar_grafico_tasa_ejecutivo(df_tasa_historico)
+        if buf_tasa:
+            elements.append(Image(buf_tasa, width=6.5 * inch, height=3.25 * inch))
+    else:
+        elements.append(build_body_paragraph("No hay datos históricos de tasa de imprevistos."))
+
+    elements.append(PageBreak())
+
+    # ======================================================================
+    # PÁGINA 3 — Narrativa + Ahorro por Mes
+    # ======================================================================
+    elements.append(build_body_paragraph(
+        "A continuación se presenta el desglose del ahorro por mes, "
+        "comparando el desempeño del taller a lo largo del tiempo."
+    ))
+    elements.append(Spacer(1, 10))
+    _exec_add_narrative(elements, narrativa_ahorro_por_mes(df_mensual))
+    elements.append(Spacer(1, 12))
+
+    # Gráfico comparativo 2025 vs 2026
+    meses_labels = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]
+    meses_nombres = [
+        'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+        'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+    ]
+
+    if not comparativo_df.empty:
+        dict_2025 = {row['MES_NOMBRE']: row[2025] for _, row in comparativo_df.iterrows()}
+        dict_2026 = {row['MES_NOMBRE']: row[2026] for _, row in comparativo_df.iterrows()}
+        valores_2025 = [dict_2025.get(m, 0) for m in meses_nombres]
+        valores_2026 = [dict_2026.get(m, 0) for m in meses_nombres]
+    else:
+        dict_mensual = {}
+        for _, row in df_mensual.iterrows():
+            dict_mensual[(int(row['AÑO']), int(row['MES']))] = row['DIFERENCIA']
+        valores_2025 = [dict_mensual.get((2025, m), 0) for m in range(1, 13)]
+        valores_2026 = [dict_mensual.get((2026, m), 0) for m in range(1, 13)]
+
+    if any(v != 0 for v in valores_2025) or any(v != 0 for v in valores_2026):
+        buf_comp = generar_grafico_ahorro_comparativo_ejecutivo(valores_2025, valores_2026, meses_labels)
+        if buf_comp:
+            elements.append(Image(buf_comp, width=6.5 * inch, height=3.25 * inch))
+    else:
+        elements.append(build_body_paragraph("No hay datos suficientes para el comparativo anual."))
+
+    elements.append(PageBreak())
+
+    # ======================================================================
+    # PÁGINA 4 — Tabla Comparativa Anual + Trimestre
+    # ======================================================================
+    elements.append(build_section_title("AHORROS GENERALES DEL PROYECTO"))
+    elements.append(Spacer(1, 8))
+
+    if not comparativo_df.empty:
+        comp_data = []
+        for _, row in comparativo_df.iterrows():
+            comp_data.append([
+                str(row['MES_NOMBRE']),
+                format_currency(row[2025]),
+                f"{row['PCT_2025']:.1f}%",
+                format_currency(row[2026]),
+                f"{row['PCT_2026']:.1f}%",
+                format_currency(row['TOTAL']),
+                f"{row['VARIACION']:.1f}%",
+            ])
+        # Fila total
+        total_2025_sum = comparativo_df[2025].sum()
+        total_2026_sum = comparativo_df[2026].sum()
+        total_sum = comparativo_df['TOTAL'].sum()
+        total_var = round(((total_2026_sum - total_2025_sum) / total_2025_sum * 100), 1) if total_2025_sum != 0 else 0.0
+        comp_data.append([
+            "TOTAL",
+            format_currency(total_2025_sum),
+            "100.0%",
+            format_currency(total_2026_sum),
+            "100.0%",
+            format_currency(total_sum),
+            f"{total_var:.1f}%",
+        ])
+        col_w = [CONTENT_WIDTH / 7] * 7
+        elements.append(build_executive_table(
+            comp_data,
+            ['MES', 'AHORRO 2025', '%', 'AHORRO 2026', '%', 'TOTAL AHORRADO', 'VARIACIÓN'],
+            col_widths=col_w,
+            has_total_row=True
+        ))
+    else:
+        elements.append(build_body_paragraph("No hay datos suficientes para el comparativo anual."))
+
+    elements.append(Spacer(1, 12))
+    _exec_add_narrative(elements, narrativa_comparativo_anual(comparativo_df))
+    elements.append(Spacer(1, 8))
+    _exec_add_narrative(elements, narrativa_ahorro_trimestre(variacion_trimestral_pct))
+
+    elements.append(PageBreak())
+
+    # ======================================================================
+    # PÁGINA 5 — Tabla Trimestral + Causales
+    # ======================================================================
+    elements.append(build_section_title("COMPARATIVO TRIMESTRAL"))
+    elements.append(Spacer(1, 8))
+
+    if not trimestral_df.empty:
+        trim_data = []
+        for _, row in trimestral_df.iterrows():
+            trim_data.append([
+                str(row['MES_NOMBRE']),
+                format_currency(row[2025]),
+                format_currency(row[2026]),
+                format_currency(row['TOTAL']),
+                f"{row['VARIACION']:.1f}%",
+            ])
+        col_w = [CONTENT_WIDTH / 5] * 5
+        elements.append(build_executive_table(
+            trim_data,
+            ['MES', '2025', '2026', 'Total', 'Variación'],
+            col_widths=col_w
+        ))
+    else:
+        elements.append(build_body_paragraph("No hay datos suficientes para el comparativo trimestral."))
+
+    elements.append(Spacer(1, 12))
+
+    df_causales = _calcular_causales_imprevistos_pdf(df)
+    _exec_add_narrative(elements, narrativa_causales(df_causales))
+    elements.append(Spacer(1, 8))
+
+    # Tabla causales por imprevisto (con dinero)
+    if not df_causales_dinero.empty:
+        caus_data = []
+        for _, row in df_causales_dinero.iterrows():
+            caus_data.append([
+                str(row['CAUSAL']),
+                format_currency(row['RECUPERACION']),
+                f"{row['PCT']:.1f}%",
+            ])
+        col_w = [CONTENT_WIDTH * 0.5, CONTENT_WIDTH * 0.25, CONTENT_WIDTH * 0.25]
+        elements.append(build_executive_table(
+            caus_data,
+            ['CAUSAS', 'RECUPERACIÓN $', '% RELATIVO'],
+            col_widths=col_w
+        ))
+    else:
+        elements.append(build_body_paragraph("No hay datos de causales con recuperación de dinero."))
+
+    elements.append(PageBreak())
+
+    # ======================================================================
+    # PÁGINA 6 — No Cotizados + Cambio Piezas
+    # ======================================================================
+    _exec_add_narrative(elements, narrativa_no_cotizados(df_no_cotizado))
+    elements.append(Spacer(1, 10))
+
+    if not df_no_cotizado.empty:
+        nc_data = []
+        for _, row in df_no_cotizado.iterrows():
+            nc_data.append([
+                str(row['ACCION']),
+                format_currency(row['RECUPERACION']),
+                f"{row['PCT']:.1f}%",
+            ])
+        col_w = [CONTENT_WIDTH * 0.5, CONTENT_WIDTH * 0.25, CONTENT_WIDTH * 0.25]
+        elements.append(build_executive_table(
+            nc_data,
+            ['ACCIONES', 'RECUPERACIÓN $', '% RELATIVO'],
+            col_widths=col_w
+        ))
+    else:
+        elements.append(build_body_paragraph("No hay datos de acciones no cotizadas."))
+
+    elements.append(Spacer(1, 12))
+    _exec_add_narrative(elements, narrativa_cambio_piezas(df_cambio))
+
+    elements.append(PageBreak())
+
+    # ======================================================================
+    # PÁGINA 7 — Tabla Cambio Piezas + Conclusión
+    # ======================================================================
+    elements.append(build_section_title("ACCIONES DE CAMBIO DE PIEZAS"))
+    elements.append(Spacer(1, 8))
+
+    if not df_cambio.empty:
+        cambio_data = []
+        for _, row in df_cambio.iterrows():
+            cambio_data.append([
+                str(row['CAUSAL']),
+                str(row['CANTIDAD']),
+                f"{row['PCT']:.1f}%",
+                format_currency(row['DINERO']),
+            ])
+        col_w = [CONTENT_WIDTH * 0.45, CONTENT_WIDTH * 0.2, CONTENT_WIDTH * 0.15, CONTENT_WIDTH * 0.2]
+        elements.append(build_executive_table(
+            cambio_data,
+            ['CAUSALES', 'CANTIDAD', '%', 'DINERO $'],
+            col_widths=col_w
+        ))
+    else:
+        elements.append(build_body_paragraph("No hay datos de cambio de piezas."))
+
+    elements.append(Spacer(1, 12))
+    _exec_add_narrative(elements, narrativa_conclusion(variacion_trimestral_pct))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
 
 
 def generate_csv_export(df):
