@@ -2,6 +2,7 @@ import io
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import pandas as pd
 
 TEAL_CHART_BG = "#2A9D8F"
 TEAL_DARK = "#1B4D4D"
@@ -346,6 +347,135 @@ def generar_grafico_ahorro_comparativo_ejecutivo(df_2025, df_2026, meses_labels)
     plt.tight_layout()
     buf = io.BytesIO()
     fig.savefig(buf, format='png', facecolor=fig.get_facecolor(), edgecolor='none')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+
+def generar_grafico_ahorro_comparativo_historico_ejecutivo(
+    df,
+    año_col="AÑO",
+    mes_col="MES",
+    ahorro_col="DIFERENCIA",
+):
+    """Genera gráfico comparativo de ahorro mensual por año con eje de meses fijo."""
+    if df is None or not hasattr(df, "empty") or df.empty:
+        return None
+    if not {año_col, mes_col, ahorro_col}.issubset(df.columns):
+        return None
+
+    df_w = df.copy()
+    df_w[año_col] = pd.to_numeric(df_w[año_col], errors="coerce")
+    df_w[mes_col] = pd.to_numeric(df_w[mes_col], errors="coerce")
+    df_w[ahorro_col] = pd.to_numeric(df_w[ahorro_col], errors="coerce").fillna(0)
+    df_w = df_w[
+        df_w[año_col].notna()
+        & df_w[mes_col].notna()
+        & (df_w[mes_col] >= 1)
+        & (df_w[mes_col] <= 12)
+    ].copy()
+
+    if df_w.empty:
+        return None
+
+    df_w[año_col] = df_w[año_col].astype(int)
+    df_w[mes_col] = df_w[mes_col].astype(int)
+    pivot = df_w.pivot_table(
+        index=mes_col,
+        columns=año_col,
+        values=ahorro_col,
+        aggfunc="sum",
+        fill_value=0,
+    ).reindex(range(1, 13), fill_value=0)
+
+    years = sorted(pivot.columns.tolist())
+    if not years:
+        return None
+
+    meses_labels = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]
+    fig, ax = plt.subplots(figsize=(7, 3.5), dpi=150)
+    _estilo_base_ejecutivo(ax, fig)
+
+    palette = [BLUE_LINE, RED_ACCENT, YELLOW_ACCENT, "#22C55E", "#A78BFA", "#F97316", "#38BDF8"]
+    x = list(range(12))
+
+    for idx, year in enumerate(years):
+        values = pivot[year].tolist()
+        values = [float(v) if float(v) != 0 else None for v in values]
+        color = palette[idx % len(palette)]
+        ax.plot(
+            x,
+            values,
+            color=color,
+            linewidth=2.3,
+            marker="o",
+            markerfacecolor=color,
+            markeredgecolor=WHITE,
+            markeredgewidth=0.8,
+            markersize=5,
+            label=str(year),
+            zorder=3,
+        )
+        label_offset = 10 if idx % 2 == 0 else -16
+        va = "bottom" if label_offset > 0 else "top"
+        for xi, value in zip(x, values):
+            if value is None:
+                continue
+            ax.annotate(
+                _formatear_moneda(value),
+                (xi, value),
+                textcoords="offset points",
+                xytext=(0, label_offset),
+                ha="center",
+                va=va,
+                color=WHITE,
+                fontsize=6.5,
+                fontweight="bold",
+                bbox={
+                    "boxstyle": "round,pad=0.18",
+                    "facecolor": TEAL_DARK,
+                    "edgecolor": color,
+                    "linewidth": 0.6,
+                    "alpha": 0.78,
+                },
+                zorder=4,
+            )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(meses_labels, color=WHITE, fontsize=8, rotation=30, ha="right")
+    ax.set_title("AHORRO POR MES", color=WHITE, fontweight="bold", fontsize=12)
+
+    legend = ax.legend(
+        loc="upper right",
+        facecolor=TEAL_DARK,
+        edgecolor=WHITE,
+        framealpha=0.7,
+        labelcolor=WHITE,
+        fontsize=8,
+    )
+    if legend is not None:
+        for text in legend.get_texts():
+            text.set_color(WHITE)
+            text.set_fontweight("bold")
+
+    max_value = df_w[ahorro_col].max()
+    if max_value >= 1_000_000:
+        ax.yaxis.set_major_formatter(
+            matplotlib.ticker.FuncFormatter(lambda y, _: f"${y/1_000_000:.0f}M")
+        )
+    elif max_value >= 1_000:
+        ax.yaxis.set_major_formatter(
+            matplotlib.ticker.FuncFormatter(lambda y, _: f"${y/1_000:.0f}k")
+        )
+    else:
+        ax.yaxis.set_major_formatter(
+            matplotlib.ticker.FuncFormatter(lambda y, _: f"${y:.0f}")
+        )
+    ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(6))
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor=fig.get_facecolor(), edgecolor="none")
     buf.seek(0)
     plt.close(fig)
     return buf

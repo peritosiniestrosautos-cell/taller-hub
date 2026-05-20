@@ -23,6 +23,13 @@ def _get_taller_display_name(talleres_seleccionados: List[str]) -> str:
     return " | ".join(nombres)
 
 
+def _default_include_honorarios_for_pdf(es_ejecutivo: bool, fee_config: dict) -> bool:
+    """Define el estado inicial del toggle de honorarios en exportación PDF."""
+    if es_ejecutivo:
+        return True
+    return not fee_config.get('hide_fees_presentation', False)
+
+
 def render_header(talleres_seleccionados: List[str] = None):
     """Renderiza el header principal del dashboard"""
     taller_nombre = _get_taller_display_name(talleres_seleccionados or [])
@@ -459,7 +466,7 @@ def render_export_section(df_filtered, filtros, talleres_seleccionados=None):
     fee_config = load_fee_config()
     include_honorarios = st.toggle(
         "📊 Incluir honorarios en el reporte PDF",
-        value=not fee_config.get('hide_fees_presentation', False),
+        value=_default_include_honorarios_for_pdf(es_ejecutivo, fee_config),
         help="Activa/desactiva la inclusión de datos de honorarios en el PDF exportado"
     )
 

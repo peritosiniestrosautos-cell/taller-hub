@@ -34,8 +34,7 @@ from .pdf_executive_helpers import (
 from .pdf_charts import (
     generar_grafico_imprevistos_ejecutivo,
     generar_grafico_tasa_ejecutivo,
-    generar_grafico_ahorro_comparativo_ejecutivo,
-    generar_grafico_ahorro_mes_ejecutivo,
+    generar_grafico_ahorro_comparativo_historico_ejecutivo,
 )
 from .pdf_narrative import (
     narrativa_corte_y_saludo, narrativa_introduccion,
@@ -1516,7 +1515,33 @@ def _exec_prepare_df_historico_cambio(df):
     resumen['periodo'] = resumen.apply(
         lambda r: f"{MESES_ES.get(int(r['_MES']), str(int(r['_MES'])))} {int(r['_AÑO'])}", axis=1
     )
-    return resumen[['periodo', 'cantidad']]
+    resumen['año'] = resumen['_AÑO'].astype(int)
+    resumen['mes'] = resumen['_MES'].astype(int)
+    return resumen[['año', 'mes', 'periodo', 'cantidad']]
+
+
+def _exec_get_cambio_counts_for_period(df_historico_cambio, año, mes):
+    """Retorna conteos de cambio del mes seleccionado y del mes calendario anterior."""
+    if (
+        df_historico_cambio is None
+        or df_historico_cambio.empty
+        or not {'año', 'mes', 'cantidad'}.issubset(df_historico_cambio.columns)
+    ):
+        return 0, 0
+
+    año = int(año)
+    mes = int(mes)
+    prev_año = año - 1 if mes == 1 else año
+    prev_mes = 12 if mes == 1 else mes - 1
+
+    df_w = df_historico_cambio.copy()
+    df_w['año'] = pd.to_numeric(df_w['año'], errors='coerce')
+    df_w['mes'] = pd.to_numeric(df_w['mes'], errors='coerce')
+    df_w['cantidad'] = pd.to_numeric(df_w['cantidad'], errors='coerce').fillna(0)
+
+    actual = df_w[(df_w['año'] == año) & (df_w['mes'] == mes)]['cantidad'].sum()
+    anterior = df_w[(df_w['año'] == prev_año) & (df_w['mes'] == prev_mes)]['cantidad'].sum()
+    return int(actual), int(anterior)
 
 
 def _exec_prepare_df_mensual_ahorro(df):
@@ -1541,6 +1566,25 @@ def _exec_prepare_df_mensual_ahorro(df):
         lambda r: f"{MESES_ES.get(int(r['MES']), str(int(r['MES'])))} {int(r['AÑO'])}", axis=1
     )
     return resumen
+
+
+def _exec_filter_df_mensual_until_period(df_mensual, año, mes):
+    """Filtra el ahorro mensual desde el inicio de los datos hasta el período seleccionado."""
+    if df_mensual is None or df_mensual.empty or not {'AÑO', 'MES'}.issubset(df_mensual.columns):
+        return pd.DataFrame()
+
+    df_w = df_mensual.copy()
+    df_w['AÑO'] = pd.to_numeric(df_w['AÑO'], errors='coerce')
+    df_w['MES'] = pd.to_numeric(df_w['MES'], errors='coerce')
+    df_w = df_w[
+        df_w['AÑO'].notna()
+        & df_w['MES'].notna()
+        & (
+            (df_w['AÑO'] < int(año))
+            | ((df_w['AÑO'] == int(año)) & (df_w['MES'] <= int(mes)))
+        )
+    ].copy()
+    return df_w.sort_values(['AÑO', 'MES']).reset_index(drop=True)
 
 
 def _exec_prepare_comparativo_anual_2025_2026(df):
@@ -1628,46 +1672,6 @@ def _exec_prepare_causales_dinero(df):
     return resumen
 
 
-def _exec_prepare_no_cotizados(df):
-    """Prepara datos de acciones no cotizadas."""
-    if df is None or df.empty or 'ACCION' not in df.columns or 'DIFERENCIA' not in df.columns:
-        return pd.DataFrame()
-    df_w = df.copy()
-    df_w['_ACCION'] = df_w['ACCION'].astype(str).str.upper().str.strip()
-    df_w = df_w[df_w['_ACCION'].str.contains('NO COTIZ', na=False)]
-    if df_w.empty:
-        return pd.DataFrame()
-    df_w['DIFERENCIA'] = pd.to_numeric(df_w['DIFERENCIA'], errors='coerce').fillna(0)
-    resumen = df_w.groupby('ACCION')['DIFERENCIA'].sum().reset_index()
-    resumen.columns = ['ACCION', 'RECUPERACION']
-    total = resumen['RECUPERACION'].sum()
-    resumen['PCT'] = resumen['RECUPERACION'].apply(lambda x: round((x / total * 100), 1) if total > 0 else 0.0)
-    resumen = resumen.sort_values('RECUPERACION', ascending=False).reset_index(drop=True)
-    return resumen
-
-
-def _exec_prepare_cambio_piezas(df):
-    """Prepara datos de cambio de piezas con dinero."""
-    if df is None or df.empty or 'ACCION' not in df.columns or 'CAUSAL' not in df.columns:
-        return pd.DataFrame()
-    df_w = df.copy()
-    df_w['_ACCION'] = df_w['ACCION'].astype(str).str.upper().str.strip()
-    df_w = df_w[df_w['_ACCION'].str.contains('CAMBIO', na=False)]
-    if df_w.empty:
-        return pd.DataFrame()
-    df_w['DIFERENCIA'] = pd.to_numeric(df_w['DIFERENCIA'], errors='coerce').fillna(0)
-    resumen = df_w.groupby('CAUSAL').agg(
-        CANTIDAD=('CAUSAL', 'size'),
-        DINERO=('DIFERENCIA', 'sum')
-    ).reset_index()
-    total_cantidad = resumen['CANTIDAD'].sum()
-    resumen['PCT'] = resumen['CANTIDAD'].apply(
-        lambda x: round((x / total_cantidad * 100), 1) if total_cantidad > 0 else 0.0
-    )
-    resumen = resumen.sort_values('DINERO', ascending=False).reset_index(drop=True)
-    return resumen
-
-
 # =============================================================================
 # GENERAR INFORME EJECUTIVO PDF
 # =============================================================================
@@ -1716,13 +1720,14 @@ def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller
 
     utilidad = total_ahorro - honorarios
 
-    # Imprevistos del mes
-    df_imp_mes = resumir_imprevistos_mensuales(df=df, año=año, meses=[mes])
-    total_imprevistos_mes = int(df_imp_mes['total_imprevistos'].sum()) if not df_imp_mes.empty else 0
-
     # Cambio de repuestos del mes (culpa del taller)
     df_cambio_mes = _preparar_cambio_repuestos_pdf(df, año, mes)
-    cambios_count = len(df_cambio_mes) if not df_cambio_mes.empty else 0
+
+    # Historial de imprevistos con cambio de repuestos, usado por el gráfico y la narrativa.
+    df_historico_cambio = _exec_prepare_df_historico_cambio(df)
+    cambios_count, cambios_count_anterior = _exec_get_cambio_counts_for_period(
+        df_historico_cambio, año, mes
+    )
 
     # Tasa histórica
     df_tasa_historico = _calcular_tasa_imprevistos_pdf(df)
@@ -1775,11 +1780,10 @@ def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller
 
     _exec_add_narrative(elements, narrativa_ahorros_generados(total_ahorro, honorarios, utilidad))
     elements.append(Spacer(1, 8))
-    _exec_add_narrative(elements, narrativa_gestion_imprevistos(total_imprevistos_mes, cambios_count))
+    _exec_add_narrative(elements, narrativa_gestion_imprevistos(cambios_count, cambios_count_anterior))
     elements.append(Spacer(1, 12))
 
     # Gráfico imprevistos histórico
-    df_historico_cambio = _exec_prepare_df_historico_cambio(df)
     if not df_historico_cambio.empty:
         buf_imp = generar_grafico_imprevistos_ejecutivo(df_historico_cambio)
         if buf_imp:
@@ -1831,42 +1835,13 @@ def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller
     _exec_add_narrative(elements, narrativa_ahorro_por_mes(df_mensual, año=año, mes=mes))
     elements.append(Spacer(1, 12))
 
-    # Gráfico comparativo 2025 vs 2026
-    # Mostrar solo hasta el mes seleccionado para evitar meses futuros en 0
-    MESES_LABELS_COMPLETO = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]
-    MESES_NOMBRES_COMPLETO = [
-        'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-        'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
-    ]
-
-    # El gráfico comparativo muestra solo hasta el mes seleccionado por el usuario
-    # para evitar mostrar meses futuros en 0
-    max_mes_idx = int(mes)
-    if max_mes_idx < 1:
-        max_mes_idx = 12
-    elif max_mes_idx > 12:
-        max_mes_idx = 12
-
-    if not comparativo_df.empty:
-        dict_2025 = {row['MES_NOMBRE']: row[2025] for _, row in comparativo_df.iterrows()}
-        dict_2026 = {row['MES_NOMBRE']: row[2026] for _, row in comparativo_df.iterrows()}
-        valores_2025 = [dict_2025.get(MESES_NOMBRES_COMPLETO[i - 1], 0) for i in range(1, max_mes_idx + 1)]
-        valores_2026 = [dict_2026.get(MESES_NOMBRES_COMPLETO[i - 1], 0) for i in range(1, max_mes_idx + 1)]
+    df_ahorro_mes_grafico = _exec_filter_df_mensual_until_period(df_mensual, año, mes)
+    if not df_ahorro_mes_grafico.empty:
+        buf_ahorro_mes = generar_grafico_ahorro_comparativo_historico_ejecutivo(df_ahorro_mes_grafico)
+        if buf_ahorro_mes:
+            elements.append(Image(buf_ahorro_mes, width=6.5 * inch, height=3.25 * inch))
     else:
-        dict_mensual = {}
-        for _, row in df_mensual.iterrows():
-            dict_mensual[(int(row['AÑO']), int(row['MES']))] = row['DIFERENCIA']
-        valores_2025 = [dict_mensual.get((2025, i), 0) for i in range(1, max_mes_idx + 1)]
-        valores_2026 = [dict_mensual.get((2026, i), 0) for i in range(1, max_mes_idx + 1)]
-
-    meses_labels = MESES_LABELS_COMPLETO[:max_mes_idx]
-
-    if any(v != 0 for v in valores_2025) or any(v != 0 for v in valores_2026):
-        buf_comp = generar_grafico_ahorro_comparativo_ejecutivo(valores_2025, valores_2026, meses_labels)
-        if buf_comp:
-            elements.append(Image(buf_comp, width=6.5 * inch, height=3.25 * inch))
-    else:
-        elements.append(build_body_paragraph("No hay datos suficientes para el comparativo anual."))
+        elements.append(build_body_paragraph("No hay datos mensuales de ahorro hasta el período seleccionado."))
 
     elements.append(PageBreak())
 
@@ -1982,7 +1957,7 @@ def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller
 
     # Nota: secciones omitidas a solicitud del cliente (2026-05-19):
     # - Página 6: No Cotizados + Cambio Piezas
-    # - Página 7: Tabla Cambio Piezas + Conclusión
+    # - Página 7: Tabla Cambio Piezas + cierre ejecutivo
 
     doc.build(elements)
     buffer.seek(0)
