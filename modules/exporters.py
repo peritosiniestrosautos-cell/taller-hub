@@ -1836,27 +1836,38 @@ def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller
         "comparando el desempeño del taller a lo largo del tiempo."
     ))
     elements.append(Spacer(1, 10))
-    _exec_add_narrative(elements, narrativa_ahorro_por_mes(df_mensual))
+    _exec_add_narrative(elements, narrativa_ahorro_por_mes(df_mensual, año=año, mes=mes))
     elements.append(Spacer(1, 12))
 
     # Gráfico comparativo 2025 vs 2026
-    meses_labels = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]
-    meses_nombres = [
+    # Mostrar solo hasta el mes seleccionado para evitar meses futuros en 0
+    MESES_LABELS_COMPLETO = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]
+    MESES_NOMBRES_COMPLETO = [
         'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
         'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
     ]
 
+    # El gráfico comparativo muestra solo hasta el mes seleccionado por el usuario
+    # para evitar mostrar meses futuros en 0
+    max_mes_idx = int(mes)
+    if max_mes_idx < 1:
+        max_mes_idx = 12
+    elif max_mes_idx > 12:
+        max_mes_idx = 12
+
     if not comparativo_df.empty:
         dict_2025 = {row['MES_NOMBRE']: row[2025] for _, row in comparativo_df.iterrows()}
         dict_2026 = {row['MES_NOMBRE']: row[2026] for _, row in comparativo_df.iterrows()}
-        valores_2025 = [dict_2025.get(m, 0) for m in meses_nombres]
-        valores_2026 = [dict_2026.get(m, 0) for m in meses_nombres]
+        valores_2025 = [dict_2025.get(MESES_NOMBRES_COMPLETO[i - 1], 0) for i in range(1, max_mes_idx + 1)]
+        valores_2026 = [dict_2026.get(MESES_NOMBRES_COMPLETO[i - 1], 0) for i in range(1, max_mes_idx + 1)]
     else:
         dict_mensual = {}
         for _, row in df_mensual.iterrows():
             dict_mensual[(int(row['AÑO']), int(row['MES']))] = row['DIFERENCIA']
-        valores_2025 = [dict_mensual.get((2025, m), 0) for m in range(1, 13)]
-        valores_2026 = [dict_mensual.get((2026, m), 0) for m in range(1, 13)]
+        valores_2025 = [dict_mensual.get((2025, i), 0) for i in range(1, max_mes_idx + 1)]
+        valores_2026 = [dict_mensual.get((2026, i), 0) for i in range(1, max_mes_idx + 1)]
+
+    meses_labels = MESES_LABELS_COMPLETO[:max_mes_idx]
 
     if any(v != 0 for v in valores_2025) or any(v != 0 for v in valores_2026):
         buf_comp = generar_grafico_ahorro_comparativo_ejecutivo(valores_2025, valores_2026, meses_labels)
@@ -1874,8 +1885,17 @@ def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller
     elements.append(Spacer(1, 8))
 
     if not comparativo_df.empty:
+        # Filtrar meses futuros: mapear nombre de mes a número y filtrar
+        MES_A_NUM = {
+            'Enero': 1, 'Febrero': 2, 'Marzo': 3, 'Abril': 4, 'Mayo': 5, 'Junio': 6,
+            'Julio': 7, 'Agosto': 8, 'Septiembre': 9, 'Octubre': 10, 'Noviembre': 11, 'Diciembre': 12
+        }
         comp_data = []
         for _, row in comparativo_df.iterrows():
+            mes_num = MES_A_NUM.get(str(row['MES_NOMBRE']), 0)
+            # Para 2026, no mostrar meses después del mes seleccionado
+            if mes_num > int(mes):
+                continue
             comp_data.append([
                 str(row['MES_NOMBRE']),
                 format_currency(row[2025]),
@@ -1885,10 +1905,13 @@ def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller
                 format_currency(row['TOTAL']),
                 f"{row['VARIACION']:.1f}%",
             ])
-        # Fila total
-        total_2025_sum = comparativo_df[2025].sum()
-        total_2026_sum = comparativo_df[2026].sum()
-        total_sum = comparativo_df['TOTAL'].sum()
+        # Fila total (solo con los meses filtrados)
+        df_filtrado = comparativo_df[
+            comparativo_df['MES_NOMBRE'].apply(lambda x: MES_A_NUM.get(str(x), 0) <= int(mes))
+        ].copy()
+        total_2025_sum = df_filtrado[2025].sum()
+        total_2026_sum = df_filtrado[2026].sum()
+        total_sum = df_filtrado['TOTAL'].sum()
         total_var = round(((total_2026_sum - total_2025_sum) / total_2025_sum * 100), 1) if total_2025_sum != 0 else 0.0
         comp_data.append([
             "TOTAL",
@@ -1910,7 +1933,7 @@ def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller
         elements.append(build_body_paragraph("No hay datos suficientes para el comparativo anual."))
 
     elements.append(Spacer(1, 12))
-    _exec_add_narrative(elements, narrativa_comparativo_anual(comparativo_df))
+    _exec_add_narrative(elements, narrativa_comparativo_anual(comparativo_df, año=año, mes=mes))
     elements.append(Spacer(1, 8))
     _exec_add_narrative(elements, narrativa_ahorro_trimestre(variacion_trimestral_pct))
 

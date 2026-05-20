@@ -235,8 +235,14 @@ def narrativa_tasa_imprevistos(tasa_actual: float, tasa_anterior: float, vehicul
 # ------------------------------------------------------------------------------
 # 7. Ahorro por mes
 # ------------------------------------------------------------------------------
-def narrativa_ahorro_por_mes(df_mensual) -> list:
-    """AHORROS POR MES: texto descriptivo de tres momentos clave según los datos mensuales."""
+def narrativa_ahorro_por_mes(df_mensual, año=None, mes=None) -> list:
+    """AHORROS POR MES: texto descriptivo de tres momentos clave según los datos mensuales.
+
+    Args:
+        df_mensual: DataFrame con columnas AÑO, MES, DIFERENCIA, periodo.
+        año: int, año seleccionado para el reporte (filtra datos futuros).
+        mes: int, mes seleccionado para el reporte (filtra datos futuros).
+    """
     elements = []
     elements.append(build_section_title("AHORROS POR MES"))
 
@@ -251,6 +257,16 @@ def narrativa_ahorro_por_mes(df_mensual) -> list:
 
     df = df_mensual.copy()
     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    # Filtrar datos futuros si se proporciona año y mes
+    if año is not None and mes is not None and 'AÑO' in df.columns and 'MES' in df.columns:
+        df['AÑO'] = pd.to_numeric(df['AÑO'], errors='coerce')
+        df['MES'] = pd.to_numeric(df['MES'], errors='coerce')
+        df = df[
+            (df['AÑO'] < int(año)) |
+            ((df['AÑO'] == int(año)) & (df['MES'] <= int(mes)))
+        ].copy()
+
     df = df[df[col] != 0].reset_index(drop=True)
 
     if df.empty:
@@ -295,9 +311,21 @@ def narrativa_ahorro_por_mes(df_mensual) -> list:
 
     inicio_label = df.iloc[0].get("periodo", df.iloc[0].get("mes_label", "el primer mes"))
 
-    texto_intro = (
-        "El comportamiento mensual muestra tres momentos claros que caracterizan la dinámica de recuperación:"
-    )
+    # Contexto del período analizado
+    if año is not None and mes is not None:
+        MESES_ES = {
+            1: 'enero', 2: 'febrero', 3: 'marzo', 4: 'abril', 5: 'mayo', 6: 'junio',
+            7: 'julio', 8: 'agosto', 9: 'septiembre', 10: 'octubre', 11: 'noviembre', 12: 'diciembre'
+        }
+        mes_nombre = MESES_ES.get(int(mes), str(mes))
+        texto_intro = (
+            f"El comportamiento mensual hasta {mes_nombre} de {año} muestra tres momentos "
+            "claros que caracterizan la dinámica de recuperación:"
+        )
+    else:
+        texto_intro = (
+            "El comportamiento mensual muestra tres momentos claros que caracterizan la dinámica de recuperación:"
+        )
     elements.append(build_body_paragraph(texto_intro))
 
     bullets = [
@@ -330,8 +358,14 @@ def narrativa_ahorro_por_mes(df_mensual) -> list:
 # ------------------------------------------------------------------------------
 # 8. Comparativo anual
 # ------------------------------------------------------------------------------
-def narrativa_comparativo_anual(comparativo_df) -> list:
-    """Texto después de la tabla comparativa anual con bullets dinámicos de variación mes a mes."""
+def narrativa_comparativo_anual(comparativo_df, año=None, mes=None) -> list:
+    """Texto después de la tabla comparativa anual con bullets dinámicos de variación mes a mes.
+
+    Args:
+        comparativo_df: DataFrame con columnas MES_NOMBRE, 2025, 2026, TOTAL, VARIACION.
+        año: int, año seleccionado para filtrar datos futuros.
+        mes: int, mes seleccionado para filtrar datos futuros.
+    """
     elements = []
 
     if _safe_len(comparativo_df) == 0:
@@ -339,27 +373,56 @@ def narrativa_comparativo_anual(comparativo_df) -> list:
         return elements
 
     df = comparativo_df.copy()
+
+    # Filtrar meses futuros si se proporciona año y mes
+    if año is not None and mes is not None:
+        MES_A_NUM = {
+            'Enero': 1, 'Febrero': 2, 'Marzo': 3, 'Abril': 4, 'Mayo': 5, 'Junio': 6,
+            'Julio': 7, 'Agosto': 8, 'Septiembre': 9, 'Octubre': 10, 'Noviembre': 11, 'Diciembre': 12
+        }
+        df['_MES_NUM'] = df['MES_NOMBRE'].apply(lambda x: MES_A_NUM.get(str(x), 0))
+        df = df[df['_MES_NUM'] <= int(mes)].copy()
+        df = df.drop(columns=['_MES_NUM'], errors='ignore')
+
     texto_intro = "Los datos muestran una dinámica muy interesante en la evolución mensual del ahorro:"
     elements.append(build_body_paragraph(texto_intro))
 
     bullets = []
     for _, row in df.iterrows():
-        periodo = row.get("periodo", "Período")
-        desviacion = row.get("desviacion_pct", 0)
-        indicador = row.get("indicador", "")
-        ahorro = row.get("DIFERENCIA", row.get("ahorro", 0))
+        periodo = row.get("MES_NOMBRE", "Período")
+        ahorro_2025 = row.get(2025, 0)
+        ahorro_2026 = row.get(2026, 0)
+        variacion = row.get("VARIACION", 0)
         try:
-            ahorro_num = float(ahorro)
+            ahorro_2025_num = float(ahorro_2025)
+            ahorro_2026_num = float(ahorro_2026)
+            variacion_num = float(variacion)
         except (TypeError, ValueError):
-            ahorro_num = 0
-        if ahorro_num <= 0:
             continue
-        if desviacion is not None and desviacion != 0:
-            bullets.append(
-                f"{periodo}: {_fmt_money(ahorro)} — variación del {_fmt_pct(desviacion)} respecto al mes anterior {indicador}."
-            )
+
+        # Solo mostrar meses donde hay datos en 2026 (el año de referencia del reporte)
+        if ahorro_2026_num <= 0 and ahorro_2025_num <= 0:
+            continue
+
+        if ahorro_2026_num > 0:
+            if variacion_num > 0:
+                bullets.append(
+                    f"{periodo}: {_fmt_money(ahorro_2026_num)} en 2026 vs {_fmt_money(ahorro_2025_num)} en 2025 — "
+                    f"crecimiento del {_fmt_pct(variacion_num)}."
+                )
+            elif variacion_num < 0:
+                bullets.append(
+                    f"{periodo}: {_fmt_money(ahorro_2026_num)} en 2026 vs {_fmt_money(ahorro_2025_num)} en 2025 — "
+                    f"contracción del {_fmt_pct(abs(variacion_num))}."
+                )
+            else:
+                bullets.append(
+                    f"{periodo}: {_fmt_money(ahorro_2026_num)} en 2026, igual a 2025 — estabilidad."
+                )
         else:
-            bullets.append(f"{periodo}: {_fmt_money(ahorro)} — primer período de referencia.")
+            bullets.append(
+                f"{periodo}: {_fmt_money(ahorro_2025_num)} en 2025 — sin datos aún para 2026."
+            )
 
     if not bullets:
         bullets.append("El período analizado muestra una evolución inicial en la recuperación de mano de obra.")
