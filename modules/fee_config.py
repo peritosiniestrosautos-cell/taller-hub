@@ -33,6 +33,19 @@ DEFAULT_FEE_CONFIG = {
     "hide_fees_presentation": False  # Toggle for presentation mode
 }
 
+SPECIAL_TALLER_DEFAULTS = {
+    "renomotriz": {
+        "threshold": 15000000,
+        "base_percentage": 0.18,
+        "premium_percentage": 0.18,
+    }
+}
+
+
+def _normalize_taller_key(taller_id: str) -> str:
+    """Normaliza identificadores/nombres de taller para reglas especiales."""
+    return str(taller_id or "").strip().lower().replace(" ", "_")
+
 
 def prepare_fee_calculation_df(df):
     """
@@ -88,6 +101,13 @@ def get_taller_fee_config(taller_id: str, config=None):
     # Check if workshop has specific config
     if taller_id in config.get('talleres', {}):
         return config['talleres'][taller_id]
+
+    normalized_taller_id = _normalize_taller_key(taller_id)
+    if normalized_taller_id in config.get('talleres', {}):
+        return config['talleres'][normalized_taller_id]
+
+    if normalized_taller_id in SPECIAL_TALLER_DEFAULTS:
+        return SPECIAL_TALLER_DEFAULTS[normalized_taller_id]
     
     # Fall back to global defaults
     return config.get('global_defaults', DEFAULT_FEE_CONFIG['global_defaults'])
