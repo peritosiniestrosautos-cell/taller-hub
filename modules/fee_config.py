@@ -13,6 +13,7 @@ Each workshop can have its own:
 
 import streamlit as st
 import json
+import unicodedata
 from pathlib import Path
 from typing import Dict, Optional
 from .data_processor import filter_authorized_savings_records
@@ -36,7 +37,12 @@ DEFAULT_FEE_CONFIG = {
 SPECIAL_TALLER_DEFAULTS = {
     "renomotriz": {
         "threshold": 15000000,
-        "base_percentage": 0.18,
+        "base_percentage": 0.15,
+        "premium_percentage": 0.18,
+    },
+    "colision_express": {
+        "threshold": 15000000,
+        "base_percentage": 0.15,
         "premium_percentage": 0.18,
     }
 }
@@ -44,7 +50,12 @@ SPECIAL_TALLER_DEFAULTS = {
 
 def _normalize_taller_key(taller_id: str) -> str:
     """Normaliza identificadores/nombres de taller para reglas especiales."""
-    return str(taller_id or "").strip().lower().replace(" ", "_")
+    text = str(taller_id or "").strip().lower()
+    text = ''.join(
+        char for char in unicodedata.normalize('NFKD', text)
+        if not unicodedata.combining(char)
+    )
+    return text.replace(" ", "_")
 
 
 def prepare_fee_calculation_df(df):
