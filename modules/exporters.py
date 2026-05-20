@@ -638,6 +638,9 @@ def _calcular_comparativo_ahorro_pdf(df):
 
     # Filtrar solo trimestres que tengan un año anterior comparable
     trimestral = trimestral[trimestral['tiene_comparativo']].copy()
+    if trimestral.empty:
+        return resumen, pd.DataFrame()
+
     trimestral['periodo'] = trimestral.apply(lambda r: f"Q{int(r['TRIMESTRE'])} {int(r['AÑO'])}", axis=1)
     trimestral['indicador'] = trimestral['desviacion_pct'].apply(
         lambda x: "▲ Aumentó" if x > 0 else ("▼ Disminuyó" if x < 0 else "● Sin cambio")

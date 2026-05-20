@@ -161,6 +161,22 @@ class GenerateExecutivePdfReportTests(unittest.TestCase):
         self.assertEqual(captured["valores"], [110, 120, 10, 20, 30, 40])
 
 
+class PdfSavingsComparisonTests(unittest.TestCase):
+    def test_comparativo_trimestral_sin_historico_homologo_no_falla(self):
+        df = pd.DataFrame(
+            {
+                "AÑO": [2026, 2026, 2026, 2026],
+                "MES": [1, 2, 4, 5],
+                "DIFERENCIA": [100_000, 200_000, 150_000, 300_000],
+            }
+        )
+
+        mensual, trimestral = exporters._calcular_comparativo_ahorro_pdf(df)
+
+        self.assertFalse(mensual.empty)
+        self.assertTrue(trimestral.empty)
+
+
 class PdfStylesTests(unittest.TestCase):
     def test_pdf_styles_cargan_correctamente(self):
         styles = get_executive_styles()
