@@ -43,8 +43,6 @@ from .pdf_narrative import (
     narrativa_imprevistos_cambio_detalle, narrativa_tasa_imprevistos,
     narrativa_ahorro_por_mes, narrativa_comparativo_anual,
     narrativa_ahorro_trimestre, narrativa_causales,
-    narrativa_no_cotizados, narrativa_cambio_piezas,
-    narrativa_conclusion,
 )
 
 import matplotlib
@@ -1757,12 +1755,6 @@ def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller
     # Causales con dinero
     df_causales_dinero = _exec_prepare_causales_dinero(df)
 
-    # No cotizados
-    df_no_cotizado = _exec_prepare_no_cotizados(df)
-
-    # Cambio de piezas
-    df_cambio = _exec_prepare_cambio_piezas(df)
-
     # ======================================================================
     # PÁGINA 1 — Portada + Introducción + KPIs + Gestión Imprevistos
     # ======================================================================
@@ -1988,62 +1980,9 @@ def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller
     else:
         elements.append(build_body_paragraph("No hay datos de causales con recuperación de dinero."))
 
-    elements.append(PageBreak())
-
-    # ======================================================================
-    # PÁGINA 6 — No Cotizados + Cambio Piezas
-    # ======================================================================
-    _exec_add_narrative(elements, narrativa_no_cotizados(df_no_cotizado))
-    elements.append(Spacer(1, 10))
-
-    if not df_no_cotizado.empty:
-        nc_data = []
-        for _, row in df_no_cotizado.iterrows():
-            nc_data.append([
-                str(row['ACCION']),
-                format_currency(row['RECUPERACION']),
-                f"{row['PCT']:.1f}%",
-            ])
-        col_w = [CONTENT_WIDTH * 0.5, CONTENT_WIDTH * 0.25, CONTENT_WIDTH * 0.25]
-        elements.append(build_executive_table(
-            nc_data,
-            ['ACCIONES', 'RECUPERACIÓN $', '% RELATIVO'],
-            col_widths=col_w
-        ))
-    else:
-        elements.append(build_body_paragraph("No hay datos de acciones no cotizadas."))
-
-    elements.append(Spacer(1, 12))
-    _exec_add_narrative(elements, narrativa_cambio_piezas(df_cambio))
-
-    elements.append(PageBreak())
-
-    # ======================================================================
-    # PÁGINA 7 — Tabla Cambio Piezas + Conclusión
-    # ======================================================================
-    elements.append(build_section_title("ACCIONES DE CAMBIO DE PIEZAS"))
-    elements.append(Spacer(1, 8))
-
-    if not df_cambio.empty:
-        cambio_data = []
-        for _, row in df_cambio.iterrows():
-            cambio_data.append([
-                str(row['CAUSAL']),
-                str(row['CANTIDAD']),
-                f"{row['PCT']:.1f}%",
-                format_currency(row['DINERO']),
-            ])
-        col_w = [CONTENT_WIDTH * 0.45, CONTENT_WIDTH * 0.2, CONTENT_WIDTH * 0.15, CONTENT_WIDTH * 0.2]
-        elements.append(build_executive_table(
-            cambio_data,
-            ['CAUSALES', 'CANTIDAD', '%', 'DINERO $'],
-            col_widths=col_w
-        ))
-    else:
-        elements.append(build_body_paragraph("No hay datos de cambio de piezas."))
-
-    elements.append(Spacer(1, 12))
-    _exec_add_narrative(elements, narrativa_conclusion(variacion_trimestral_pct))
+    # Nota: secciones omitidas a solicitud del cliente (2026-05-19):
+    # - Página 6: No Cotizados + Cambio Piezas
+    # - Página 7: Tabla Cambio Piezas + Conclusión
 
     doc.build(elements)
     buffer.seek(0)
