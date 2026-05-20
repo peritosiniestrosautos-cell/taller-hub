@@ -49,13 +49,34 @@ def _ensure_data_dir():
 def _get_default_talleres() -> Dict[str, dict]:
     """Retorna la configuración por defecto de talleres"""
     return {
+        "autozen": {
+            "id": "autozen",
+            "nombre": "Autozen",
+            "sheet_url": "https://docs.google.com/spreadsheets/d/1IJetXo3teQCw1iTVGR1ky-GDMMRoUd-D/edit?gid=1340033279#gid=1340033279",
+            "activo": False,
+            "color": BrandColors.PRIMARY,
+        },
         "taller_1": {
             "id": "taller_1",
             "nombre": "Distrikia",
             "sheet_url": "https://docs.google.com/spreadsheets/d/1WgrIeUkrmvgecDP5hKaOtXjrmxsGdjSzMrari4LbvAI/edit?gid=0#gid=0",
             "activo": True,
-            "color": BrandColors.PRIMARY,
-        }
+            "color": BrandColors.SECONDARY,
+        },
+        "renomotriz": {
+            "id": "renomotriz",
+            "nombre": "Renomotriz",
+            "sheet_url": "https://docs.google.com/spreadsheets/d/1PvdZBQCFBBFSgKhjfFkHFXs1jO5nJIUvXBSlX0pXUZg/edit?gid=0#gid=0",
+            "activo": False,
+            "color": BrandColors.ACCENT,
+        },
+        "colision_express": {
+            "id": "colision_express",
+            "nombre": "Colisión Express",
+            "sheet_url": "https://docs.google.com/spreadsheets/d/1ScPJ0hsqdwS2Lwo2KujfzCKJKsrwRxvbkdVghk4sVS0/edit?gid=0#gid=0",
+            "activo": False,
+            "color": "#F59E0B",
+        },
     }
 
 
