@@ -128,6 +128,128 @@ def generar_grafico_imprevistos_ejecutivo(df, periodos_col="periodo", cantidad_c
     return buf
 
 
+def generar_grafico_demora_definicion_ejecutivo(df_pivot):
+    """Genera gráfico de barras agrupadas de demora en definición con estilo ejecutivo (fondo teal).
+
+    Parámetros:
+        df_pivot: DataFrame con columnas COMPAÑIA_DE_SEGUROS,
+                  promedio_demora_AUTORIZADO, promedio_demora_RECHAZADO,
+                  conteo_AUTORIZADO, conteo_RECHAZADO.
+
+    Retorna io.BytesIO con PNG o None si no hay datos.
+    """
+    if df_pivot is None or hasattr(df_pivot, 'empty') and df_pivot.empty:
+        return None
+
+    required = {"COMPAÑIA_DE_SEGUROS", "promedio_demora_AUTORIZADO",
+                "promedio_demora_RECHAZADO", "conteo_AUTORIZADO", "conteo_RECHAZADO"}
+    if not required.issubset(df_pivot.columns):
+        return None
+
+    cias = df_pivot["COMPAÑIA_DE_SEGUROS"].tolist()
+    if not cias:
+        return None
+
+    autorizado_vals = df_pivot["promedio_demora_AUTORIZADO"].tolist()
+    rechazado_vals = df_pivot["promedio_demora_RECHAZADO"].tolist()
+    autorizado_cnt = df_pivot["conteo_AUTORIZADO"].tolist()
+    rechazado_cnt = df_pivot["conteo_RECHAZADO"].tolist()
+
+    x = range(len(cias))
+    width = 0.35
+
+    fig, ax = plt.subplots(figsize=(7, 3.5), dpi=150)
+    _estilo_base_ejecutivo(ax, fig)
+
+    bars1 = ax.bar(
+        [i - width / 2 for i in x],
+        autorizado_vals,
+        width,
+        label="AUTORIZADO",
+        color=WHITE,
+        edgecolor=TEAL_DARK,
+        linewidth=0.8,
+        zorder=3,
+    )
+    bars2 = ax.bar(
+        [i + width / 2 for i in x],
+        rechazado_vals,
+        width,
+        label="RECHAZADO",
+        color=YELLOW_ACCENT,
+        edgecolor=TEAL_DARK,
+        linewidth=0.8,
+        zorder=3,
+    )
+
+    # Etiquetas encima de barras
+    for bar, cnt in zip(bars1, autorizado_cnt):
+        height = bar.get_height()
+        if height > 0:
+            ax.annotate(
+                f"{height:.1f}d ({int(cnt)})",
+                xy=(bar.get_x() + bar.get_width() / 2, height),
+                xytext=(0, 4),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=7,
+                fontweight="bold",
+                color=WHITE,
+                zorder=4,
+            )
+
+    for bar, cnt in zip(bars2, rechazado_cnt):
+        height = bar.get_height()
+        if height > 0:
+            ax.annotate(
+                f"{height:.1f}d ({int(cnt)})",
+                xy=(bar.get_x() + bar.get_width() / 2, height),
+                xytext=(0, 4),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=7,
+                fontweight="bold",
+                color=WHITE,
+                zorder=4,
+            )
+
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(cias, rotation=30, ha="right", fontsize=8, color=WHITE)
+    ax.set_title(
+        "DEMORA EN DEFINICIÓN DEL IMPREVISTO",
+        color=WHITE,
+        fontweight="bold",
+        fontsize=12,
+    )
+    ax.set_ylabel("Promedio de Días", color=WHITE, fontsize=9)
+
+    # Leyenda
+    legend = ax.legend(
+        loc="upper right",
+        facecolor=TEAL_DARK,
+        edgecolor=WHITE,
+        framealpha=0.7,
+        labelcolor=WHITE,
+        fontsize=8,
+    )
+    if legend is not None:
+        for text in legend.get_texts():
+            text.set_color(WHITE)
+            text.set_fontweight("bold")
+
+    ax.set_ylim(bottom=0)
+    ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(6))
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor=fig.get_facecolor(), edgecolor="none")
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+
 def generar_grafico_tasa_ejecutivo(df, x_col="mes_nombre", y_col="tasa"):
     """Genera gráfico de línea ejecutivo para tasa de imprevistos mensual.
 

@@ -10,6 +10,7 @@ from modules import exporters
 from modules.pdf_charts import (
     generar_grafico_ahorro_comparativo_ejecutivo,
     generar_grafico_ahorro_comparativo_historico_ejecutivo,
+    generar_grafico_demora_definicion_ejecutivo,
     generar_grafico_imprevistos_ejecutivo,
     generar_grafico_tasa_ejecutivo,
 )
@@ -201,6 +202,23 @@ class PdfChartsTests(unittest.TestCase):
         self.assertIsNone(
             generar_grafico_ahorro_comparativo_ejecutivo(empty_df, empty_df, ["Ene", "Feb"])
         )
+        self.assertIsNone(generar_grafico_demora_definicion_ejecutivo(empty_df))
+
+    def test_grafico_demora_definicion_ejecutivo_retorna_png(self):
+        df = pd.DataFrame(
+            {
+                "COMPAÑIA_DE_SEGUROS": ["SeguroA", "SeguroB"],
+                "promedio_demora_AUTORIZADO": [5.2, 3.1],
+                "promedio_demora_RECHAZADO": [8.5, 4.0],
+                "conteo_AUTORIZADO": [10, 5],
+                "conteo_RECHAZADO": [3, 2],
+            }
+        )
+
+        result = generar_grafico_demora_definicion_ejecutivo(df)
+
+        self.assertIsInstance(result, io.BytesIO)
+        self.assertGreater(result.getbuffer().nbytes, 1000)
 
     def test_grafico_ahorro_comparativo_historico_retorna_png(self):
         df = pd.DataFrame(

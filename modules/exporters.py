@@ -35,6 +35,7 @@ from .pdf_charts import (
     generar_grafico_imprevistos_ejecutivo,
     generar_grafico_tasa_ejecutivo,
     generar_grafico_ahorro_comparativo_historico_ejecutivo,
+    generar_grafico_demora_definicion_ejecutivo,
 )
 from .pdf_narrative import (
     narrativa_corte_y_saludo, narrativa_introduccion,
@@ -1793,6 +1794,17 @@ def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller
             elements.append(Image(buf_imp, width=6.5 * inch, height=3.25 * inch))
     else:
         elements.append(build_body_paragraph("No hay datos históricos de imprevistos con cambio de repuestos."))
+
+    elements.append(Spacer(1, 16))
+
+    # Gráfico demora en definición del imprevisto
+    df_demora = _preparar_demora_definicion_pdf(df)
+    if not df_demora.empty:
+        buf_demora = generar_grafico_demora_definicion_ejecutivo(df_demora)
+        if buf_demora:
+            elements.append(Image(buf_demora, width=6.5 * inch, height=3.25 * inch))
+    else:
+        elements.append(build_body_paragraph("No hay datos de demora en definición del imprevisto."))
 
     # No forzar salto de página; dejar que el contenido fluya naturalmente
     elements.append(Spacer(1, 16))
