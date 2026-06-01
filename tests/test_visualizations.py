@@ -1,8 +1,35 @@
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
 from modules import visualizations
+
+
+class _FakeColumn:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+
+class _FakeStreamlit:
+    def __init__(self):
+        self.markdown_calls = []
+        self.warning_calls = []
+
+    def columns(self, count, **kwargs):
+        return [_FakeColumn() for _ in range(count)]
+
+    def markdown(self, body, **kwargs):
+        self.markdown_calls.append(body)
+
+    def warning(self, body):
+        self.warning_calls.append(body)
+
+    def expander(self, *args, **kwargs):
+        return _FakeColumn()
 
 
 class VisualizationsTests(unittest.TestCase):
@@ -25,6 +52,47 @@ class VisualizationsTests(unittest.TestCase):
             visualizations.format_period_label(2.0, 2025.0),
             "02/2025",
         )
+
+    def test_render_kpis_calcula_honorarios_con_metricas_deduplicadas(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "PLACA": "ABC123",
+                    "SINIESTRO": "S1",
+                    "ESTATUS": "AUTORIZADO",
+                    "TALLER_ORIGEN": "Renomotriz",
+                    "DIFERENCIA": 10_000_000,
+                    "AÑO": 2026,
+                    "MES": 3,
+                },
+                {
+                    "PLACA": "ABC123",
+                    "SINIESTRO": "S1",
+                    "ESTATUS": "AUTORIZADO",
+                    "TALLER_ORIGEN": "Renomotriz",
+                    "DIFERENCIA": 99_000_000,
+                    "AÑO": 2026,
+                    "MES": 3,
+                },
+            ]
+        )
+        fake_st = _FakeStreamlit()
+        fee_config = {
+            "global_defaults": {
+                "threshold": 15_000_000,
+                "base_percentage": 0.18,
+                "premium_percentage": 0.20,
+            },
+            "talleres": {},
+            "hide_fees_presentation": False,
+        }
+
+        with patch.object(visualizations, "st", fake_st), patch.object(visualizations, "load_fee_config", return_value=fee_config):
+            visualizations.render_kpis(df)
+
+        rendered = "\n".join(fake_st.markdown_calls)
+        self.assertIn("$1,500,000", rendered)
+        self.assertNotIn("$19,620,000", rendered)
 
     def test_filtrar_top_causales_por_mes_trimestre_y_anio(self):
         df = pd.DataFrame(

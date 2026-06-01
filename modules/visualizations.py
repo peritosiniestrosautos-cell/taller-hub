@@ -87,7 +87,7 @@ def render_kpis(df):
 
     # Cálculo de honorarios por mes (regla de umbral por taller, evaluada mes a mes)
     fee_config = load_fee_config()
-    fee_info = calculate_fees_per_month(df_honorarios, fee_config)
+    fee_info = calculate_fees_per_month(df_metricas, fee_config)
     
     # Total honorarios = sum of per-month (and per-taller) fees
     honorarios = fee_info['total_honorarios']

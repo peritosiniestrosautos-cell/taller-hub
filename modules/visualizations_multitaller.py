@@ -78,7 +78,7 @@ def render_kpis_multitaller(df):
     
     # Apply per-taller per-month fee calculation
     fee_config = load_fee_config()
-    fee_info = calculate_fees_per_month(df_honorarios, fee_config)
+    fee_info = calculate_fees_per_month(df, fee_config)
     
     # Update resumen with per-taller fees (sum of per-month)
     for idx, row in resumen.iterrows():
