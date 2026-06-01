@@ -324,7 +324,9 @@ def aplicar_filtros(df, filtros):
     # =========================================================================
     if filtros.get('talleres') and len(filtros['talleres']) > 0:
         if 'TALLER_ORIGEN' in df_filtered.columns:
-            df_filtered = df_filtered[df_filtered['TALLER_ORIGEN'].isin(filtros['talleres'])]
+            talleres_filtrables = set(filtros['talleres'])
+            talleres_filtrables.update(get_nombre_taller(taller) for taller in filtros['talleres'])
+            df_filtered = df_filtered[df_filtered['TALLER_ORIGEN'].isin(talleres_filtrables)]
     
     # =========================================================================
     # FILTROS EXISTENTES

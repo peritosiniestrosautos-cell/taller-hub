@@ -1680,7 +1680,7 @@ def _exec_prepare_causales_dinero(df):
 # GENERAR INFORME EJECUTIVO PDF
 # =============================================================================
 
-def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller_nombre="Distrikia"):
+def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller_nombre="Taller Hub"):
     """
     Genera un PDF ejecutivo tipo informe mensual (similar al PDF de referencia del cliente).
 
@@ -1767,7 +1767,7 @@ def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller
     # ======================================================================
     # PÁGINA 1 — Portada + Introducción + KPIs + Gestión Imprevistos
     # ======================================================================
-    _exec_add_narrative(elements, narrativa_corte_y_saludo(mes_nombre, año))
+    _exec_add_narrative(elements, narrativa_corte_y_saludo(mes_nombre, año, taller_nombre))
     elements.append(Spacer(1, 12))
     _exec_add_narrative(elements, narrativa_introduccion(mes_nombre, año, total_ahorro, honorarios, utilidad))
     elements.append(Spacer(1, 12))

@@ -64,6 +64,25 @@ class GenerateExecutivePdfReportTests(unittest.TestCase):
         self.assertIsInstance(result, io.BytesIO)
         self.assertGreater(len(result.getvalue()), 0)
 
+    def test_generate_executive_pdf_report_pasa_nombre_taller_a_saludo(self):
+        df = _make_minimal_df()
+        captured = {}
+
+        def fake_narrativa_corte_y_saludo(*args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return []
+
+        with patch.object(exporters, "narrativa_corte_y_saludo", side_effect=fake_narrativa_corte_y_saludo):
+            exporters.generate_executive_pdf_report(
+                df,
+                mes=3,
+                año=2026,
+                taller_nombre="Renomotriz",
+            )
+
+        self.assertIn("Renomotriz", captured["args"])
+
     def test_generate_executive_pdf_report_sin_honorarios(self):
         df = _make_minimal_df()
         result = exporters.generate_executive_pdf_report(

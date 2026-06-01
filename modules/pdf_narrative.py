@@ -70,11 +70,11 @@ def _get_ahorro_col(df):
 # ------------------------------------------------------------------------------
 # 1. Corte y saludo
 # ------------------------------------------------------------------------------
-def narrativa_corte_y_saludo(mes_nombre: str, año: int) -> list:
-    """Retorna [Paragraph('Corte: Mes Año'), Paragraph('Compañeros de Distrikia:'), Spacer, Paragraph(intro)]"""
+def narrativa_corte_y_saludo(mes_nombre: str, año: int, taller_nombre: str = "Taller Hub") -> list:
+    """Retorna el corte, saludo y texto introductorio del informe ejecutivo."""
     elements = []
     elements.append(Paragraph(f"Corte: {mes_nombre} {año}", styles["EXEC_CORTE"]))
-    elements.append(Paragraph("Compañeros de Distrikia:", styles["EXEC_GREETING"]))
+    elements.append(Paragraph(f"Compañeros de {taller_nombre}:", styles["EXEC_GREETING"]))
     elements.append(Spacer(1, 6))
     intro = (
         f"El presente informe corresponde al cierre de {mes_nombre} de {año}. "
@@ -537,4 +537,3 @@ def narrativa_causales(df_causales) -> list:
     ]
     elements.extend(build_bullet_list(bullets))
     return elements
-
