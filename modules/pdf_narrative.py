@@ -384,6 +384,12 @@ def narrativa_comparativo_anual(comparativo_df, año=None, mes=None) -> list:
         df = df[df['_MES_NUM'] <= int(mes)].copy()
         df = df.drop(columns=['_MES_NUM'], errors='ignore')
 
+    ahorro_2025 = pd.to_numeric(df.get(2025), errors='coerce')
+    ahorro_2026 = pd.to_numeric(df.get(2026), errors='coerce')
+    df = df[(ahorro_2025 > 0) & (ahorro_2026 > 0)].copy()
+    if df.empty:
+        return elements
+
     texto_intro = "Los datos muestran una dinámica muy interesante en la evolución mensual del ahorro:"
     elements.append(build_body_paragraph(texto_intro))
 

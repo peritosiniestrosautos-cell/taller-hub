@@ -15,7 +15,7 @@ from modules.pdf_charts import (
     generar_grafico_tasa_ejecutivo,
 )
 from modules.pdf_executive_helpers import build_kpi_card
-from modules.pdf_narrative import narrativa_introduccion
+from modules.pdf_narrative import narrativa_comparativo_anual, narrativa_introduccion
 from modules.pdf_styles import EXEC_COLORS, get_executive_styles
 
 
@@ -273,6 +273,36 @@ class PdfNarrativeTests(unittest.TestCase):
     def test_pdf_narrative_retorna_lista(self):
         result = narrativa_introduccion("Marzo", 2026, 1_000_000, 200_000, 800_000)
         self.assertIsInstance(result, list)
+
+    def test_comparativo_anual_no_muestra_narrativa_sin_historico_homologo(self):
+        comparativo_df = pd.DataFrame(
+            {
+                "MES_NOMBRE": ["Enero", "Febrero"],
+                2025: [0, 0],
+                2026: [100_000, 200_000],
+                "VARIACION": [0.0, 0.0],
+            }
+        )
+
+        result = narrativa_comparativo_anual(comparativo_df, año=2026, mes=2)
+
+        self.assertEqual(result, [])
+
+    def test_comparativo_anual_omite_mes_sin_historico_homologo(self):
+        comparativo_df = pd.DataFrame(
+            {
+                "MES_NOMBRE": ["Enero", "Febrero"],
+                2025: [0, 100_000],
+                2026: [150_000, 200_000],
+                "VARIACION": [0.0, 100.0],
+            }
+        )
+
+        result = narrativa_comparativo_anual(comparativo_df, año=2026, mes=2)
+        textos = [element.text for element in result if hasattr(element, "text")]
+
+        self.assertFalse(any("Enero" in texto for texto in textos))
+        self.assertTrue(any("Febrero" in texto for texto in textos))
 
 
 if __name__ == "__main__":
