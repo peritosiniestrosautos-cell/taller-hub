@@ -1717,7 +1717,7 @@ def generate_executive_pdf_report(df, mes, año, include_honorarios=True, taller
     if include_honorarios and 'DIFERENCIA' in df_ahorro.columns:
         try:
             fee_config = load_fee_config()
-            fee_info = calculate_fees_per_month(df_ahorro, fee_config)
+            fee_info = calculate_fees_per_month(df_ahorro, fee_config, taller_id=taller_nombre)
             honorarios = fee_info.get('total_honorarios', 0) if fee_info else 0
         except Exception:
             honorarios = 0

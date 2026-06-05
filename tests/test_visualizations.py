@@ -91,7 +91,9 @@ class VisualizationsTests(unittest.TestCase):
             visualizations.render_kpis(df)
 
         rendered = "\n".join(fake_st.markdown_calls)
+        self.assertIn("$109,000,000", rendered)
         self.assertIn("$1,500,000", rendered)
+        self.assertIn("$107,500,000", rendered)
         self.assertNotIn("$19,620,000", rendered)
 
     def test_filtrar_top_causales_por_mes_trimestre_y_anio(self):

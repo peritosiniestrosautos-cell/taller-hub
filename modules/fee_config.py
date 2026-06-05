@@ -14,6 +14,7 @@ Each workshop can have its own:
 import streamlit as st
 import json
 import unicodedata
+import pandas as pd
 from pathlib import Path
 from typing import Dict, Optional
 from .data_processor import filter_authorized_savings_records
@@ -243,7 +244,7 @@ def calculate_fees_for_df(df, config=None):
     return result
 
 
-def calculate_fees_per_month(df, config=None):
+def calculate_fees_per_month(df, config=None, taller_id=None):
     """
     Calculate fees on a per-month basis. Each month's recovery is evaluated
     independently against the threshold rule (not accumulated).
@@ -251,6 +252,7 @@ def calculate_fees_per_month(df, config=None):
     Args:
         df: DataFrame with DIFERENCIA, AÑO, MES columns (and optionally TALLER_ORIGEN)
         config: Fee configuration
+        taller_id: Optional explicit workshop ID. If provided, overrides auto-detection.
     
     Returns:
         dict: {
@@ -285,18 +287,29 @@ def calculate_fees_per_month(df, config=None):
     if has_taller:
         for taller in df['TALLER_ORIGEN'].unique():
             df_taller = df[df['TALLER_ORIGEN'] == taller]
-            taller_result = _calculate_fees_per_month_single(df_taller, taller, config)
+            # Use explicit taller_id if it matches, otherwise use detected taller name
+            effective_taller_id = taller_id if taller_id and _normalize_taller_key(taller_id) == _normalize_taller_key(taller) else taller
+            taller_result = _calculate_fees_per_month_single(df_taller, effective_taller_id, config)
             result['total_honorarios'] += taller_result['total_honorarios']
             result['total_savings'] += taller_result['total_savings']
             result['by_taller'][taller] = taller_result
         
         # Also populate consolidated monthly_percentages for the combined chart
         # using global threshold rule on aggregated per-month totals
-        consolidated_result = _calculate_fees_per_month_single(df, None, config)
+        consolidated_result = _calculate_fees_per_month_single(df, taller_id, config)
         result['monthly_percentages'] = consolidated_result['monthly_percentages']
         result['by_month'] = consolidated_result['by_month']
     else:
-        taller_id = df['TALLER_ORIGEN'].iloc[0] if 'TALLER_ORIGEN' in df.columns else None
+        if taller_id is None:
+            # Robust fallback: detect from dataframe or session state
+            if 'TALLER_ORIGEN' in df.columns and len(df) > 0:
+                val = df['TALLER_ORIGEN'].iloc[0]
+                if pd.notna(val) and str(val).strip():
+                    taller_id = str(val).strip()
+            if taller_id is None and 'TALLER_ID' in df.columns and len(df) > 0:
+                val = df['TALLER_ID'].iloc[0]
+                if pd.notna(val) and str(val).strip():
+                    taller_id = str(val).strip()
         single_result = _calculate_fees_per_month_single(df, taller_id, config)
         result['total_honorarios'] = single_result['total_honorarios']
         result['total_savings'] = single_result['total_savings']

@@ -87,11 +87,23 @@ def render_kpis(df):
 
     # Cálculo de honorarios por mes (regla de umbral por taller, evaluada mes a mes)
     fee_config = load_fee_config()
-    fee_info = calculate_fees_per_month(df_metricas, fee_config)
+    
+    # Detectar taller_id explícitamente para asegurar que se use la config correcta
+    taller_id = None
+    if 'TALLER_ORIGEN' in df_metricas.columns and len(df_metricas) > 0:
+        val = df_metricas['TALLER_ORIGEN'].iloc[0]
+        if pd.notna(val) and str(val).strip():
+            taller_id = str(val).strip()
+    if taller_id is None and 'TALLER_ID' in df_metricas.columns and len(df_metricas) > 0:
+        val = df_metricas['TALLER_ID'].iloc[0]
+        if pd.notna(val) and str(val).strip():
+            taller_id = str(val).strip()
+    
+    fee_info = calculate_fees_per_month(df_metricas, fee_config, taller_id=taller_id)
     
     # Total honorarios = sum of per-month (and per-taller) fees
     honorarios = fee_info['total_honorarios']
-    utilidad = total_ahorro_metricas - honorarios
+    utilidad = total_ahorro - honorarios
     
     # Check presentation mode
     hide_fees = fee_config.get('hide_fees_presentation', False)
