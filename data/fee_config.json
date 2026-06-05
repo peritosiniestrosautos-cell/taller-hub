@@ -14,6 +14,16 @@
       "threshold": 15000000,
       "base_percentage": 0.18,
       "premium_percentage": 0.2
+    },
+    "taller_1": {
+      "threshold": 15000000,
+      "base_percentage": 0.18,
+      "premium_percentage": 0.2
+    },
+    "renomotriz": {
+      "threshold": 15000000,
+      "base_percentage": 0.15,
+      "premium_percentage": 0.18
     }
   },
   "hide_fees_presentation": true
