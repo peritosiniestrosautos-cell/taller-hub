@@ -53,7 +53,7 @@ class VisualizationsTests(unittest.TestCase):
             "02/2025",
         )
 
-    def test_render_kpis_calcula_honorarios_con_metricas_deduplicadas(self):
+    def test_render_kpis_calcula_honorarios_sobre_todos_los_autorizados_sin_deduplicar(self):
         df = pd.DataFrame(
             [
                 {
@@ -91,10 +91,15 @@ class VisualizationsTests(unittest.TestCase):
             visualizations.render_kpis(df)
 
         rendered = "\n".join(fake_st.markdown_calls)
+        # El ahorro acumulado sigue siendo el bruto (ambos registros)
         self.assertIn("$109,000,000", rendered)
-        self.assertIn("$1,500,000", rendered)
-        self.assertIn("$107,500,000", rendered)
-        self.assertNotIn("$19,620,000", rendered)
+        # Los honorarios se calculan sobre todos los autorizados sin deduplicar:
+        # $109M en un solo mes supera el umbral -> 18% = $19,620,000
+        self.assertIn("$19,620,000", rendered)
+        # Utilidad = ahorro bruto - honorarios
+        self.assertIn("$89,380,000", rendered)
+        # El conteo de reparaciones en el KPI de ahorro acumulado no deduplica
+        self.assertIn("2 reparaciones con ahorro", rendered)
 
     def test_filtrar_top_causales_por_mes_trimestre_y_anio(self):
         df = pd.DataFrame(

@@ -71,35 +71,37 @@ def render_kpis(df):
     if df_honorarios is None:
         df_honorarios = pd.DataFrame(columns=df.columns)
 
-    df_metricas = df_honorarios.copy()
+    # Cálculo de honorarios por mes (regla de umbral por taller, evaluada mes a mes).
+    # Se calcula sobre TODOS los registros AUTORIZADOS sin deduplicar para alinearse
+    # con el cálculo que hace el taller en su hoja de control.
+    fee_config = load_fee_config()
 
-    # RF-005.3: Deduplicar por PLACA + SINIESTRO — misma placa con mismo
-    # siniestro solo cuenta una vez. Placas con siniestros distintos sí cuentan.
+    # Detectar taller_id explícitamente para asegurar que se use la config correcta
+    taller_id = None
+    source_df_for_taller = df_honorarios if not df_honorarios.empty else df
+    if 'TALLER_ORIGEN' in source_df_for_taller.columns and len(source_df_for_taller) > 0:
+        val = source_df_for_taller['TALLER_ORIGEN'].iloc[0]
+        if pd.notna(val) and str(val).strip():
+            taller_id = str(val).strip()
+    if taller_id is None and 'TALLER_ID' in source_df_for_taller.columns and len(source_df_for_taller) > 0:
+        val = source_df_for_taller['TALLER_ID'].iloc[0]
+        if pd.notna(val) and str(val).strip():
+            taller_id = str(val).strip()
+
+    fee_info = calculate_fees_per_month(df_honorarios, fee_config, taller_id=taller_id)
+
+    # Para métricas de reparaciones y promedio, deduplicar por PLACA + SINIESTRO
+    # — misma placa con mismo siniestro solo cuenta una vez.
+    df_metricas = df_honorarios.copy()
     if 'PLACA' in df_metricas.columns and 'SINIESTRO' in df_metricas.columns:
         df_metricas = df_metricas.drop_duplicates(subset=['PLACA', 'SINIESTRO'], keep='first')
 
-    total_ahorro_metricas = df_metricas['DIFERENCIA'].sum() if not df_metricas.empty else 0
+    total_ahorro_honorarios = df_honorarios['DIFERENCIA'].sum() if not df_honorarios.empty else 0
     reparaciones_metricas = len(df_metricas[df_metricas['DIFERENCIA'] > 0]) if not df_metricas.empty else 0
     promedio_ahorro = (
         df_metricas[df_metricas['DIFERENCIA'] > 0]['DIFERENCIA'].mean()
         if reparaciones_metricas > 0 else 0
     )
-
-    # Cálculo de honorarios por mes (regla de umbral por taller, evaluada mes a mes)
-    fee_config = load_fee_config()
-    
-    # Detectar taller_id explícitamente para asegurar que se use la config correcta
-    taller_id = None
-    if 'TALLER_ORIGEN' in df_metricas.columns and len(df_metricas) > 0:
-        val = df_metricas['TALLER_ORIGEN'].iloc[0]
-        if pd.notna(val) and str(val).strip():
-            taller_id = str(val).strip()
-    if taller_id is None and 'TALLER_ID' in df_metricas.columns and len(df_metricas) > 0:
-        val = df_metricas['TALLER_ID'].iloc[0]
-        if pd.notna(val) and str(val).strip():
-            taller_id = str(val).strip()
-    
-    fee_info = calculate_fees_per_month(df_metricas, fee_config, taller_id=taller_id)
     
     # Total honorarios = sum of per-month (and per-taller) fees
     honorarios = fee_info['total_honorarios']
@@ -132,8 +134,8 @@ def render_kpis(df):
             </div>
             """, unsafe_allow_html=True)
         else:
-            # Calculate effective rate for display
-            effective_rate = (honorarios / total_ahorro_metricas * 100) if total_ahorro_metricas > 0 else 0
+            # Calculate effective rate for display (sobre el monto usado para honorarios)
+            effective_rate = (honorarios / total_ahorro_honorarios * 100) if total_ahorro_honorarios > 0 else 0
             
             if es_multitaller and fee_info['by_taller']:
                 st.markdown(f"""
