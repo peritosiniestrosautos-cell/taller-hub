@@ -57,6 +57,22 @@ def _format_honorarios_kpi_value(honorarios, fee_percentage=None):
     return format_currency(honorarios)
 
 
+def _get_pdf_financial_df(df):
+    """Base de ahorro para el PDF: solo registros autorizados, con DIFERENCIA numérica."""
+    if df is None:
+        return pd.DataFrame()
+
+    df_financial = filter_authorized_savings_records(df) if 'ESTATUS' in df.columns else df.copy()
+    if df_financial is None:
+        return pd.DataFrame()
+
+    df_financial = df_financial.copy()
+    if 'DIFERENCIA' in df_financial.columns:
+        df_financial['DIFERENCIA'] = pd.to_numeric(df_financial['DIFERENCIA'], errors='coerce').fillna(0)
+
+    return df_financial
+
+
 def _get_vehiculos_por_mes_pdf():
     """
     Obtiene datos de vehículos por mes para el PDF.
@@ -848,9 +864,10 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
     # KPIs PRINCIPALES
     # =========================================================================
     elements.append(Paragraph("📊 Métricas Principales", heading_style))
+    df_financial = _get_pdf_financial_df(df)
     
     if 'DIFERENCIA' in df.columns:
-        total_ahorro = df['DIFERENCIA'].sum()
+        total_ahorro = df_financial['DIFERENCIA'].sum() if 'DIFERENCIA' in df_financial.columns else 0
         
         # Calcular honorarios si se incluyen
         fee_info = None
@@ -859,7 +876,7 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
         
         if include_honorarios:
             fee_config = load_fee_config()
-            fee_info = calculate_fees_per_month(df, fee_config)
+            fee_info = calculate_fees_per_month(df_financial, fee_config)
             honorarios = fee_info['total_honorarios']
             fee_percentage = (honorarios / total_ahorro * 100) if total_ahorro > 0 else 0
             utilidad = total_ahorro - honorarios
@@ -915,12 +932,12 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
         # =========================================================================
         # RESUMEN POR TALLER (si es multitaller)
         # =========================================================================
-        if 'TALLER_ORIGEN' in df.columns and df['TALLER_ORIGEN'].nunique() > 1:
+        if 'TALLER_ORIGEN' in df_financial.columns and df_financial['TALLER_ORIGEN'].nunique() > 1:
             elements.append(Paragraph("🏪 Resumen por Taller", heading_style))
             
             talleres_resumen = []
-            for taller_id in df['TALLER_ORIGEN'].unique():
-                df_taller = df[df['TALLER_ORIGEN'] == taller_id]
+            for taller_id in df_financial['TALLER_ORIGEN'].unique():
+                df_taller = df_financial[df_financial['TALLER_ORIGEN'] == taller_id]
                 ahorro_taller = df_taller['DIFERENCIA'].sum()
                 row_data = [
                     Paragraph(taller_id, body_style),
@@ -1135,16 +1152,16 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
         # =========================================================================
         # RESUMEN MENSUAL (Ahorro por Mes)
         # =========================================================================
-        if 'AÑO' in df.columns and 'MES' in df.columns:
+        if 'AÑO' in df_financial.columns and 'MES' in df_financial.columns:
             elements.append(Paragraph("📅 Ahorro por Mes", heading_style))
 
             # Gráfico
-            grafico_ahorro_buf = _generar_grafico_ahorro_mes(df)
+            grafico_ahorro_buf = _generar_grafico_ahorro_mes(df_financial)
             if grafico_ahorro_buf:
                 elements.append(Image(grafico_ahorro_buf, width=6.5*inch, height=3*inch))
                 elements.append(Spacer(1, 10))
             
-            resumen_mes = df.groupby(['AÑO', 'MES']).agg({
+            resumen_mes = df_financial.groupby(['AÑO', 'MES']).agg({
                 'DIFERENCIA': ['sum', 'mean', 'count']
             }).round(0)
             resumen_mes.columns = ['Ahorro Total', 'Promedio', 'Reparaciones']
@@ -1190,7 +1207,7 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
         # =========================================================================
         # COMPARATIVO DE AHORROS (Mensual y Trimestral con % Desviación)
         # =========================================================================
-        comparativo_mes, comparativo_trim = _calcular_comparativo_ahorro_pdf(df)
+        comparativo_mes, comparativo_trim = _calcular_comparativo_ahorro_pdf(df_financial)
         if not comparativo_mes.empty:
             elements.append(Paragraph("📈 Ahorros Generales - Comparativo con Desviación", heading_style))
             
@@ -1318,10 +1335,10 @@ def generate_pdf_report(df, filtros_aplicados, include_honorarios=True, taller_n
         # =========================================================================
         # TOP CAUSALES DE AHORRO
         # =========================================================================
-        if 'CAUSAL' in df.columns:
+        if 'CAUSAL' in df_financial.columns:
             elements.append(Paragraph("🔍 Top 10 Causales de Ahorro", heading_style))
             
-            resumen_causal = df.groupby('CAUSAL').agg({
+            resumen_causal = df_financial.groupby('CAUSAL').agg({
                 'DIFERENCIA': ['sum', 'count']
             }).round(0)
             resumen_causal.columns = ['Ahorro Total', 'Frecuencia']

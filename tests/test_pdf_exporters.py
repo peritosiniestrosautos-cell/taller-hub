@@ -48,6 +48,55 @@ class PdfExporterFormattingTests(unittest.TestCase):
     def test_kpi_font_size_se_reduce_dos_puntos_adicionales_para_exportacion_pdf(self):
         self.assertEqual(exporters.PDF_KPI_FONT_SIZE, 10)
 
+    def test_pdf_financial_df_usa_solo_ahorro_autorizado(self):
+        df = pd.DataFrame(
+            {
+                "TALLER_ORIGEN": ["Colisión Express", "Colisión Express", "Colisión Express"],
+                "ESTATUS": ["AUTORIZADO", "RECHAZADO", "PENDIENTE"],
+                "DIFERENCIA": [12_000_000, -11_500_000, 700_000],
+                "AÑO": [2026, 2026, 2026],
+                "MES": [5, 5, 5],
+            }
+        )
+
+        result = exporters._get_pdf_financial_df(df)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result["DIFERENCIA"].sum(), 12_000_000)
+
+    def test_generate_pdf_report_calcula_honorarios_con_base_autorizada(self):
+        df = pd.DataFrame(
+            {
+                "TALLER_ORIGEN": ["Colisión Express", "Colisión Express"],
+                "ESTATUS": ["AUTORIZADO", "RECHAZADO"],
+                "DIFERENCIA": [20_000_000, -19_500_000],
+                "AÑO": [2026, 2026],
+                "MES": [5, 5],
+                "CAUSAL": ["NO COTIZADO", "NO COTIZADO"],
+                "ACCION": ["CAMBIO", "CAMBIO"],
+                "IMPREVISTO": ["pieza", "pieza"],
+                "PLACA": ["AAA111", "BBB222"],
+            }
+        )
+        captured = {}
+
+        def fake_calculate_fees_per_month(df_arg, *args, **kwargs):
+            captured["total"] = df_arg["DIFERENCIA"].sum()
+            captured["statuses"] = df_arg["ESTATUS"].tolist()
+            return {
+                "total_honorarios": 3_600_000,
+                "total_savings": df_arg["DIFERENCIA"].sum(),
+                "monthly_percentages": {},
+                "by_month": [],
+                "by_taller": {},
+            }
+
+        with patch.object(exporters, "calculate_fees_per_month", side_effect=fake_calculate_fees_per_month):
+            exporters.generate_pdf_report(df, {}, include_honorarios=True, taller_nombre="Colisión Express")
+
+        self.assertEqual(captured["total"], 20_000_000)
+        self.assertEqual(captured["statuses"], ["AUTORIZADO"])
+
 
 class GenerateExecutivePdfReportTests(unittest.TestCase):
     def test_generate_executive_pdf_report_retorna_bytesio(self):
